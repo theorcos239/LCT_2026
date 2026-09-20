@@ -1,0 +1,12 @@
+{
+  "cv_accuracy": 1.0,
+  "stress_accuracy": 0.9814814814814815,
+  "novelty_threshold": 1.2306313753128062,
+  "novelty_rejects_own": 0.011904761904761904,
+  "orientation_accuracy": 0.998015873015873,
+  "n_images": 252,
+  "n_studies": 100,
+  "folds": 5,
+  "jitter": 3,
+  "seconds": 6.3
+}
