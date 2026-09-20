@@ -1,0 +1,191 @@
+{
+ "n_frames": 153,
+ "methods": {
+  "kit0": {
+   "n": 150,
+   "tp": 5,
+   "tn": 141,
+   "fp": 2,
+   "fn": 2,
+   "sensitivity": 0.714,
+   "specificity": 0.986,
+   "undecided": 0,
+   "violations_predicted": 7,
+   "violations_expert": 7,
+   "ms_per_frame_median": 0.0,
+   "flags_top": {
+    "proxy:scan_length_only": 153
+   }
+  },
+  "kit1": {
+   "n": 148,
+   "tp": 5,
+   "tn": 118,
+   "fp": 23,
+   "fn": 2,
+   "sensitivity": 0.714,
+   "specificity": 0.837,
+   "undecided": 2,
+   "violations_predicted": 28,
+   "violations_expert": 7,
+   "ms_per_frame_median": 8.4,
+   "flags_top": {
+    "B:not_stabilised": 16,
+    "B:diaphysis_not_reached": 2,
+    "mask:suspect_wide_shaft": 2
+   }
+  },
+  "kit2": {
+   "n": 150,
+   "tp": 5,
+   "tn": 120,
+   "fp": 23,
+   "fn": 2,
+   "sensitivity": 0.714,
+   "specificity": 0.839,
+   "undecided": 0,
+   "violations_predicted": 28,
+   "violations_expert": 7,
+   "ms_per_frame_median": 13.5,
+   "flags_top": {
+    "B:fallback_anatomical": 51,
+    "B:B1_B2_disagree": 51,
+    "L:no_bulge_fallback_L2": 11,
+    "B:clamped_to_prior": 10,
+    "B:not_stabilised": 7,
+    "B:lesser_troch_not_visible": 6,
+    "B:single_source_B1": 4,
+    "B:single_source_B2": 4
+   }
+  },
+  "kit3": {
+   "n": 150,
+   "tp": 6,
+   "tn": 110,
+   "fp": 33,
+   "fn": 1,
+   "sensitivity": 0.857,
+   "specificity": 0.769,
+   "undecided": 0,
+   "violations_predicted": 39,
+   "violations_expert": 7,
+   "ms_per_frame_median": 69.0,
+   "flags_top": {
+    "B:ridge_not_flat": 32,
+    "T:T3_T5_disagree": 17,
+    "axis:tilt_too_large": 17,
+    "sep:failed": 4,
+    "T:fallback_T5": 1
+   }
+  }
+ },
+ "d_TB_calibration": {
+  "n_frames": 89,
+  "median_mm": 70.7,
+  "p10_mm": 63.1,
+  "p90_mm": 78.3,
+  "current_constant_mm": 72.0
+ },
+ "kit2_margins_by_rows": {
+  "(0, 210]": {
+   "n": 7,
+   "top_med": 45.5,
+   "bottom_med": 12.1,
+   "lat_med": 39.5,
+   "violations": 7
+  },
+  "(210, 240]": {
+   "n": 30,
+   "top_med": 42.5,
+   "bottom_med": 29.4,
+   "lat_med": 48.2,
+   "violations": 16
+  },
+  "(240, 270]": {
+   "n": 50,
+   "top_med": 44.3,
+   "bottom_med": 43.4,
+   "lat_med": 39.8,
+   "violations": 1
+  },
+  "(270, 300]": {
+   "n": 36,
+   "top_med": 48.9,
+   "bottom_med": 54.6,
+   "lat_med": 37.3,
+   "violations": 3
+  },
+  "(300, 330]": {
+   "n": 14,
+   "top_med": 48.6,
+   "bottom_med": 72.8,
+   "lat_med": 40.4,
+   "violations": 0
+  },
+  "(330, 420]": {
+   "n": 16,
+   "top_med": 88.6,
+   "bottom_med": 46.1,
+   "lat_med": 34.6,
+   "violations": 1
+  }
+ },
+ "kit2_threshold_sweep": {
+  "bottom>=30&lat>=20": {
+   "tp": 5,
+   "fn": 2,
+   "fp": 23,
+   "tn": 120
+  },
+  "bottom>=30&lat>=15": {
+   "tp": 5,
+   "fn": 2,
+   "fp": 20,
+   "tn": 123
+  },
+  "bottom>=25&lat>=20": {
+   "tp": 5,
+   "fn": 2,
+   "fp": 15,
+   "tn": 128
+  },
+  "bottom>=25&lat>=15": {
+   "tp": 5,
+   "fn": 2,
+   "fp": 12,
+   "tn": 131
+  },
+  "bottom>=20&lat>=20": {
+   "tp": 5,
+   "fn": 2,
+   "fp": 7,
+   "tn": 136
+  },
+  "bottom>=20&lat>=15": {
+   "tp": 5,
+   "fn": 2,
+   "fp": 4,
+   "tn": 139
+  },
+  "bottom>=15&lat>=20": {
+   "tp": 5,
+   "fn": 2,
+   "fp": 6,
+   "tn": 137
+  },
+  "bottom>=15&lat>=15": {
+   "tp": 5,
+   "fn": 2,
+   "fp": 3,
+   "tn": 140
+  }
+ },
+ "pairwise_verdict_agreement": {
+  "kit0~kit1": 0.837,
+  "kit0~kit2": 0.863,
+  "kit0~kit3": 0.791,
+  "kit1~kit2": 0.889,
+  "kit1~kit3": 0.804,
+  "kit2~kit3": 0.85
+ }
+}
