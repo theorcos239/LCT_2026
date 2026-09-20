@@ -1,0 +1,10 @@
+numpy
+pandas
+scipy
+scikit-learn
+pydicom
+pillow
+pyyaml
+openpyxl
+torch
+torchvision            # только ради весов ImageNet; архитектура от него не зависит
