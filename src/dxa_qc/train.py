@@ -133,13 +133,8 @@ def run_fold(cfg: dict, data: dict, fold: int, device: torch.device) -> dict:
     return best
 
 
-def main() -> None:
-    p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--config", default="configs/keypoints.yaml")
-    p.add_argument("--set", nargs="*", default=[], dest="overrides")
-    a = p.parse_args()
-
-    cfg = cfgmod.load(a.config, a.overrides)
+def train_all(cfg: dict) -> dict:
+    """Обучение по всем фолдам конфига. Возвращает OOF-предсказания, метрики и пороги."""
     set_seed(cfg["seed"], cfg["deterministic"])
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     data = packmod.load(cfg["data"]["pack"])
@@ -148,26 +143,36 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     cfgmod.save(cfg, out_dir / "config.yaml")
 
-    oof = {}
-    for fold in cfg["train"]["folds"]:
-        oof[fold] = run_fold(cfg, data, fold, device)["oof"]
-
+    oof = {fold: run_fold(cfg, data, fold, device)["oof"] for fold in cfg["train"]["folds"]}
     keys = ("pred", "conf", "true", "visible", "labeled", "index")
     merged = {k: np.concatenate([oof[f][k] for f in oof]) for k in keys}
+
     thresholds = M.calibrate_thresholds(data["names"], merged["conf"], merged["visible"],
                                         merged["labeled"])
-    thresholds.to_csv(out_dir / "thresholds.csv")
     table = M.per_point(data["names"], merged["pred"], merged["conf"], merged["true"],
                         merged["visible"], merged["labeled"],
                         thresholds.to_numpy(), cfg["data"]["mm_per_px"])
-    table.to_csv(out_dir / "metrics_per_point.csv", index=False)
     e2e = M.end_to_end(data["names"], merged["pred"], merged["true"], merged["visible"],
                        np.array(data["regions"])[merged["index"]])
+
+    thresholds.to_csv(out_dir / "thresholds.csv")
+    table.to_csv(out_dir / "metrics_per_point.csv", index=False)
     e2e.to_csv(out_dir / "metrics_end_to_end.csv", index=False)
     np.savez_compressed(out_dir / "oof.npz", **merged)
+    return {"data": data, "oof": merged, "per_point": table, "end_to_end": e2e,
+            "thresholds": thresholds, "out_dir": out_dir, "device": str(device)}
+
+
+def main() -> None:
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--config", default="configs/keypoints.yaml")
+    p.add_argument("--set", nargs="*", default=[], dest="overrides")
+    a = p.parse_args()
+
+    result = train_all(cfgmod.load(a.config, a.overrides))
     pd.set_option("display.width", 200)
-    print(table.round(2).to_string(index=False))
-    print(e2e.round(2).to_string(index=False))
+    print(result["per_point"].round(2).to_string(index=False))
+    print(result["end_to_end"].round(2).to_string(index=False))
 
 
 if __name__ == "__main__":
