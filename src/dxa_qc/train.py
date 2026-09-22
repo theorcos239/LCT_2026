@@ -43,6 +43,13 @@ class EMA:
                 s.copy_(m)
 
 
+def save_atomic(obj: dict, path: Path) -> None:
+    """Запись через временный файл: обрыв посреди сохранения не оставит битый чекпоинт."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    torch.save(obj, tmp)
+    tmp.replace(path)
+
+
 def set_seed(seed: int, deterministic: bool) -> None:
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -74,7 +81,8 @@ def predict(model, loader, device, window: int):
     return {k: np.concatenate(v) for k, v in out.items()}
 
 
-def run_fold(cfg: dict, data: dict, fold: int, device: torch.device) -> dict:
+def run_fold(cfg: dict, data: dict, fold: int, device: torch.device,
+             resume: bool = True) -> dict:
     names = data["names"]
     studies = np.array(data["studies"])
     folds = foldsmod.load(cfg["data"]["folds"], set(map(str, studies)))
@@ -100,8 +108,25 @@ def run_fold(cfg: dict, data: dict, fold: int, device: torch.device) -> dict:
         opt, lambda e: lr_lambda(e, t["warmup_epochs"], t["epochs"]))
     ema = EMA(model, t["ema_decay"])
 
+    out_dir = Path(t["out_dir"])
+    out_dir.mkdir(parents=True, exist_ok=True)
+    best_path, last_path = out_dir / f"fold{fold}.pt", out_dir / f"fold{fold}_last.pt"
+    history_path = out_dir / f"fold{fold}_history.csv"
+
     best = {"median_mm": math.inf, "epoch": -1, "state": None, "oof": None}
-    for epoch in range(t["epochs"]):
+    history, start_epoch = [], 0
+    if resume and last_path.exists():
+        ckpt = torch.load(last_path, map_location=device, weights_only=False)
+        model.load_state_dict(ckpt["model"])
+        ema.shadow.load_state_dict(ckpt["ema"])
+        opt.load_state_dict(ckpt["optimizer"])
+        sched.load_state_dict(ckpt["scheduler"])
+        best.update(median_mm=ckpt["best_median_mm"], epoch=ckpt["best_epoch"])
+        history, start_epoch = ckpt["history"], ckpt["epoch"] + 1
+        print(f"fold {fold}: продолжаем с эпохи {start_epoch} "
+              f"(лучшая медиана {best['median_mm']:.2f} мм)")
+
+    for epoch in range(start_epoch, t["epochs"]):
         model.train()
         train_ds.epoch = epoch
         for batch in train_dl:
@@ -118,23 +143,39 @@ def run_fold(cfg: dict, data: dict, fold: int, device: torch.device) -> dict:
         oof = predict(ema.shadow, val_dl, device, cfg["heatmap"]["decode_window"])
         err = np.linalg.norm(oof["pred"] - oof["true"], axis=-1) * d["mm_per_px"]
         median = float(np.median(err[oof["visible"]])) if oof["visible"].any() else math.inf
+        history.append({"epoch": epoch, "loss": float(loss), "median_mm": median})
+        pd.DataFrame(history).to_csv(history_path, index=False)
+
         if median < best["median_mm"]:
-            best = {"median_mm": median, "epoch": epoch,
-                    "state": copy.deepcopy(ema.shadow.state_dict()), "oof": oof}
+            best = {"median_mm": median, "epoch": epoch}
+            save_atomic({"model": ema.shadow.state_dict(), "names": names, "config": cfg,
+                         "fold": fold, "epoch": epoch, "median_mm": median}, best_path)
+        if epoch % t.get("checkpoint_every", 10) == 0 or epoch == t["epochs"] - 1:
+            save_atomic({"model": model.state_dict(), "ema": ema.shadow.state_dict(),
+                         "optimizer": opt.state_dict(), "scheduler": sched.state_dict(),
+                         "epoch": epoch, "history": history, "config": cfg, "fold": fold,
+                         "best_median_mm": best["median_mm"], "best_epoch": best["epoch"]},
+                        last_path)
         if epoch - best["epoch"] >= t["patience"]:
             break
         print(f"fold {fold} epoch {epoch:3d} loss {loss.item():.4f} median {median:.2f} мм")
 
-    out_dir = Path(t["out_dir"])
-    out_dir.mkdir(parents=True, exist_ok=True)
-    torch.save({"model": best["state"], "names": names, "config": cfg},
-               out_dir / f"fold{fold}.pt")
+    # OOF считаем от сохранённых лучших весов: так результат не зависит от того,
+    # был ли прогон продолжен после обрыва.
+    ema.shadow.load_state_dict(torch.load(best_path, map_location=device,
+                                          weights_only=False)["model"])
+    best["oof"] = predict(ema.shadow, val_dl, device, cfg["heatmap"]["decode_window"])
+    np.savez_compressed(out_dir / f"oof_fold{fold}.npz", **best["oof"])
     print(f"fold {fold}: лучшая медиана {best['median_mm']:.2f} мм (эпоха {best['epoch']})")
     return best
 
 
-def train_all(cfg: dict) -> dict:
-    """Обучение по всем фолдам конфига. Возвращает OOF-предсказания, метрики и пороги."""
+def train_all(cfg: dict, resume: bool = True) -> dict:
+    """Обучение по всем фолдам конфига. Возвращает OOF-предсказания, метрики и пороги.
+
+    С resume=True продолжает прерванный прогон: готовые фолды пропускает, незаконченный
+    поднимает с последнего чекпоинта.
+    """
     set_seed(cfg["seed"], cfg["deterministic"])
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     data = packmod.load(cfg["data"]["pack"])
@@ -143,7 +184,14 @@ def train_all(cfg: dict) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
     cfgmod.save(cfg, out_dir / "config.yaml")
 
-    oof = {fold: run_fold(cfg, data, fold, device)["oof"] for fold in cfg["train"]["folds"]}
+    oof = {}
+    for fold in cfg["train"]["folds"]:
+        done = out_dir / f"oof_fold{fold}.npz"
+        if resume and done.exists():
+            print(f"fold {fold}: уже обучен, пропускаем ({done})")
+            oof[fold] = dict(np.load(done))
+        else:
+            oof[fold] = run_fold(cfg, data, fold, device, resume)["oof"]
     keys = ("pred", "conf", "true", "visible", "labeled", "index")
     merged = {k: np.concatenate([oof[f][k] for f in oof]) for k in keys}
 
@@ -167,9 +215,11 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--config", default="configs/keypoints.yaml")
     p.add_argument("--set", nargs="*", default=[], dest="overrides")
+    p.add_argument("--no-resume", action="store_true",
+                   help="начать заново, игнорируя чекпоинты в out_dir")
     a = p.parse_args()
 
-    result = train_all(cfgmod.load(a.config, a.overrides))
+    result = train_all(cfgmod.load(a.config, a.overrides), resume=not a.no_resume)
     pd.set_option("display.width", 200)
     print(result["per_point"].round(2).to_string(index=False))
     print(result["end_to_end"].round(2).to_string(index=False))

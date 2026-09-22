@@ -25,7 +25,11 @@ from . import points as P
 from .data import guess_region, read_dicom, scan_studies, unique_images
 
 UNLABELED, ABSENT, LABELED, OTHER = 0, 1, 2, 3
-SKIP_FLAGS = {"out_of_scope", "unreadable"}
+# review — спорный снимок, разбираем с разметчиком; в обучение до разбора не идёт.
+SKIP_FLAGS = {"out_of_scope", "unreadable", "review"}
+# p1 — закончен первый проход (13 основных точек), боковые края тел ещё не размечены:
+# они остаются UNLABELED и в потерях не участвуют.
+STATUSES = ("done", "p1")
 _HTML_RE = re.compile(
     r'\{"id":"([0-9a-f]+)","w":(\d+),"h":(\d+),"region":"(\w+)","src":"data:image/png;base64,([^"]+)"'
 )
@@ -57,50 +61,67 @@ def match_ids(html_px: dict[str, np.ndarray], images) -> dict[str, dict]:
     return out
 
 
+def latest_annotations(annotations: list[str | Path]) -> dict[str, dict]:
+    """Разметки из нескольких файлов; при повторе снимка берётся более поздняя версия."""
+    out: dict[str, dict] = {}
+    for path in annotations:
+        ann = json.loads(Path(path).read_text(encoding="utf-8"))
+        for uid, a in ann["images"].items():
+            prev = out.get(uid)
+            if prev is None or str(a.get("updated_at", "")) >= str(prev.get("updated_at", "")):
+                out[uid] = {**a, "source": Path(path).name}
+    return out
+
+
 def build(annotations: list[str | Path], html: str | Path, studies_root: str | Path,
-          spine_edges: bool = True, canvas: tuple[int, int] = (352, 320)) -> dict:
+          spine_edges: bool = True, canvas: tuple[int, int] = (352, 320),
+          statuses: tuple[str, ...] = STATUSES) -> dict:
     names = P.channels(spine_edges)
     idx = {n: i for i, n in enumerate(names)}
     regions = P.region_slices(spine_edges)
     matched = match_ids(html_images(html), unique_images(scan_studies(studies_root)))
 
     records, skipped = [], []
-    for ann_path in annotations:
-        ann = json.loads(Path(ann_path).read_text(encoding="utf-8"))
-        for uid, a in ann["images"].items():
-            src = matched[uid]
-            h, w = src["pixels"].shape
-            if SKIP_FLAGS & set(a["flags"]):
-                skipped.append((uid, "флаг " + ",".join(SKIP_FLAGS & set(a["flags"]))))
-                continue
-            if h > canvas[0] or w > canvas[1]:
-                # выбросы вне холста в обучение не идут, они уходят в смоук-тест
-                skipped.append((uid, f"размер {h}×{w} больше холста {canvas[0]}×{canvas[1]}"))
-                continue
-            side = guess_region(src["pixels"])                      # spine / rhip / lhip
-            pts = {k: (v["x"], v["y"]) for k, v in a["points"].items()}
-            px, pts = P.mirror_to_left(src["pixels"], pts, side)
-            region = "spine" if side == "spine" else "hip"
+    for uid, a in latest_annotations(annotations).items():
+        src = matched[uid]
+        h, w = src["pixels"].shape
+        side = guess_region(src["pixels"])                          # spine / rhip / lhip
+        region = "spine" if side == "spine" else "hip"
+        own = regions[region]
+        core = [n for n in names[own]]
 
-            state = np.full(len(names), OTHER, dtype=np.uint8)
-            coords = np.zeros((len(names), 2), dtype=np.float32)
-            own = regions[region]
-            state[own] = UNLABELED
-            for name in names[own]:
-                if name in pts:
-                    state[idx[name]] = LABELED
-                    coords[idx[name]] = pts[name]
-                elif name in a["absent"]:
-                    state[idx[name]] = ABSENT
-            records.append(dict(id=uid, study=src["study"], region=region, side=side,
-                                image=px, coords=coords, state=state,
-                                flags=",".join(a["flags"])))
-    return {
-        "names": names,
-        "records": records,
-        "skipped": skipped,
-        "annotators": [Path(p).stem for p in annotations],
-    }
+        if a["status"] not in statuses:
+            skipped.append((uid, f"статус {a['status']}"))
+            continue
+        if SKIP_FLAGS & set(a["flags"]):
+            skipped.append((uid, "флаг " + ",".join(sorted(SKIP_FLAGS & set(a["flags"])))))
+            continue
+        if h > canvas[0] or w > canvas[1]:
+            # выбросы вне холста в обучение не идут, они уходят в смоук-тест
+            skipped.append((uid, f"размер {h}×{w} больше холста {canvas[0]}×{canvas[1]}"))
+            continue
+        if not a["points"]:
+            # Все точки отмечены отсутствующими: либо снимок не наш, либо разметчик
+            # не смог разобрать анатомию. Обучать этому молчанию нельзя.
+            skipped.append((uid, "нет ни одной размеченной точки"))
+            continue
+
+        pts = {k: (v["x"], v["y"]) for k, v in a["points"].items()}
+        px, pts = P.mirror_to_left(src["pixels"], pts, side)
+
+        state = np.full(len(names), OTHER, dtype=np.uint8)
+        coords = np.zeros((len(names), 2), dtype=np.float32)
+        state[own] = UNLABELED
+        for name in core:
+            if name in pts:
+                state[idx[name]] = LABELED
+                coords[idx[name]] = pts[name]
+            elif name in a["absent"]:
+                state[idx[name]] = ABSENT
+        records.append(dict(id=uid, study=src["study"], region=region, side=side,
+                            image=px, coords=coords, state=state,
+                            flags=",".join(a["flags"])))
+    return {"names": names, "records": records, "skipped": skipped}
 
 
 def save(pack: dict, path: str | Path) -> None:
@@ -131,17 +152,20 @@ def main() -> None:
     p.add_argument("--out", required=True)
     p.add_argument("--no-spine-edges", action="store_true")
     p.add_argument("--canvas", nargs=2, type=int, default=[352, 320])
+    p.add_argument("--statuses", nargs="+", default=list(STATUSES))
     a = p.parse_args()
 
     pack = build(a.annotations, a.html, a.studies,
-                 spine_edges=not a.no_spine_edges, canvas=tuple(a.canvas))
+                 spine_edges=not a.no_spine_edges, canvas=tuple(a.canvas),
+                 statuses=tuple(a.statuses))
     save(pack, a.out)
     n = len(pack["records"])
     reg = [r["region"] for r in pack["records"]]
     print(f"{a.out}: {n} снимков (позвоночник {reg.count('spine')}, бедро {reg.count('hip')}), "
           f"каналов {len(pack['names'])}, пропущено {len(pack['skipped'])}")
-    for uid, why in pack["skipped"]:
-        print(f"  пропущен {uid}: {why}")
+    import collections
+    for why, n in collections.Counter(w for _, w in pack["skipped"]).most_common():
+        print(f"  пропущено {n:3d}: {why}")
 
 
 if __name__ == "__main__":
