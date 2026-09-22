@@ -46,8 +46,8 @@ train:
   lr_decoder: 3.0e-4
   weight_decay: 1.0e-4
   warmup_epochs: 5
-  patience: 50                        # ранняя остановка по медианной ошибке в мм
-  checkpoint_every: 10                # как часто писать fold{N}_last.pt для продолжения
+  patience: 300                       # ранняя остановка по медианной ошибке в мм (>= epochs — выключена)
+  checkpoint_every: 50                # как часто писать fold{N}_last.pt для продолжения
   ema_decay: 0.999
   amp: false                          # титаны могут быть Pascal
   out_dir: runs/keypoints
