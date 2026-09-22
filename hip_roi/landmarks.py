@@ -8,7 +8,7 @@
 Ориентиры:
     L — столбец самой латеральной точки бедра          (L1, L2, L3)
     T — строка верхушки большого вертела               (T1, T2, T3, T5)
-    B — строка нижней границы малого вертела / низ ROI (B1, B2, B3, B4)
+    B — низ ROI, конец вертельной массы                (B1, B2, B3, B4, B5)
 """
 from __future__ import annotations
 
@@ -17,7 +17,8 @@ from scipy import ndimage as ndi
 
 from .geometry import (D_TB_MM, EIGHT, component_containing, lateral_profile,
                        medial_profile, mm2px, moving_average, px2mm,
-                       top_profile, trace_contour, width_profile)
+                       top_profile, trace_contour, unscanned_region,
+                       width_profile)
 
 
 def _profiles(mask: np.ndarray):
@@ -402,6 +403,167 @@ def B3_distance_ridge(mask: np.ndarray, T: int, win_mm: float = 15.0, tol_mm: fl
     return h, {'flags': ['B:ridge_not_flat']}
 
 
+def row_mass(img: np.ndarray, mask: np.ndarray, max_width_mm: float = 55.0):
+    """«Масса» кости в строке: сумма яркости по сегменту бедра / 255.
+
+    Это тон, а не силуэт: в bone map яркость пропорциональна поверхностной
+    плотности, поэтому сумма по строке — эффективная толщина кости в этой
+    строке. Строки, где сегмент шире max_width_mm, помечаются недостоверными:
+    такой ширины у бедра ниже вертелов не бывает, значит медиальный край
+    «ушёл» на таз через зону наложения.
+
+    Строки, задетые незасканированным вырезом поля, тоже недостоверны:
+    там сегмент обрезан границей поля, а не костью.
+
+    Возвращает (mass, valid).
+    """
+    arr = np.asarray(img, dtype=np.float64)
+    xl, xm, w = _profiles(mask)
+    h, wd = mask.shape
+    notch = unscanned_region(img)
+    mass = np.zeros(h)
+    cut = np.zeros(h, bool)
+    for y in range(h):
+        if w[y] > 0:
+            a, b = xl[y], min(xm[y], wd)
+            mass[y] = arr[y, a:b].sum() / 255.0
+            lo, hi = max(0, a - 2), min(wd, b + 2)
+            cut[y] = bool(notch[y, lo:hi].any())     # строку задел вырез поля
+    valid = (w > 0) & (w <= mm2px(max_width_mm)) & ~cut
+    return mass, valid
+
+
+def B5_mass_minimum(img: np.ndarray, mask: np.ndarray, T: int, min_tb_mm: float = 35.0,
+                    smooth_mm: float = 6.0, tail_mm: float = 10.0, max_width_mm: float = 55.0):
+    """B5. Субтрохантерный уровень: минимум массы строки ниже вертелов.
+
+    Вертельная масса добавляет кости, дальше книзу идёт сужение до самого
+    узкого места бедра — субтрохантерного, ниже которого кортикал утолщается
+    и масса снова растёт. Минимум массы и есть конец вертельной массы, то есть
+    низ области интереса.
+
+    Почему не «стабилизация ширины» (B1) и не «отклонение медиального контура»
+    (B2): проксимальный диафиз расширяется кверху плавно, без излома, поэтому
+    оба правила срабатывают на 2-4 см ниже конца вертельной массы (проверено
+    на кадрах, где эксперт не видит нарушения, а ТЗ по старому B давало
+    «снизу < 3 см»). Масса же имеет настоящий экстремум.
+
+    Если минимум пришёлся на последние tail_mm достоверных строк, значит
+    сужение ещё не пройдено — кадр обрезан выше субтрохантерного уровня:
+    возвращается H (отступ снизу 0).
+    """
+    h = mask.shape[0]
+    mass, valid = row_mass(img, mask, max_width_mm)
+    y0 = max(int(T) + mm2px(min_tb_mm), 0)
+    idx = np.flatnonzero(valid)
+    idx = idx[idx >= y0]
+    info = {'flags': [], 'n_valid': int(idx.size)}
+    if idx.size < mm2px(tail_mm):
+        info['flags'].append('B:no_valid_rows')
+        return h, info
+    ms = moving_average(mass, 2 * mm2px(smooth_mm) + 1)
+    j = int(idx[np.argmin(ms[idx])])
+    info.update(mass_min=round(float(ms[j]), 1), last_valid=int(idx.max()),
+                mass_at_last=round(float(ms[idx.max()]), 1))
+    if idx.max() - j < mm2px(tail_mm):
+        info['flags'].append('B:narrowing_not_passed')
+        return h, info
+    return j, info
+
+
+def B6_trochanteric_mass_end(img: np.ndarray, mask: np.ndarray, T: int, min_tb_mm: float = 25.0,
+                             delta_frac: float = 0.05, run_mm: float = 6.0, smooth_mm: float = 6.0,
+                             tail_mm: float = 10.0, max_width_mm: float = 55.0):
+    """B6. Низ ROI = нижняя граница добавочной массы вертелов.
+
+    Работает по тону, а не по силуэту. Масса строки (сумма яркости по сегменту
+    бедра) вдоль бедра ведёт себя так: вертелы дают избыток кости, ниже них
+    масса падает до субтрохантерного минимума, а дальше книзу медленно растёт
+    вместе с толщиной кортикала. Значит:
+
+      1. субтрохантерный минимум массы — опорный уровень «чистого» бедра;
+      2. низ ROI — первая строка ВЫШЕ него, где масса устойчиво (run_mm)
+         превысила этот уровень на delta_frac: там начинается вертельная масса.
+
+    Почему не «стабилизация ширины» (B1) и не «минимум массы» (B5): силуэт
+    проксимального диафиза расширяется кверху плавно, без излома, поэтому B1
+    ставит низ ROI на 2-4 см ниже вертелов; сам минимум массы лежит ниже
+    вертелов примерно на столько же. Проверено на кадрах, где эксперт не видит
+    нарушения, а прежнее правило давало «снизу < 3 см».
+
+    Если ниже минимума нет хотя бы tail_mm достоверных строк, сужение не
+    пройдено — кадр обрезан выше субтрохантерного уровня: H (отступ снизу 0).
+    """
+    h = mask.shape[0]
+    mass, valid = row_mass(img, mask, max_width_mm)
+    ms = moving_average(mass, 2 * mm2px(smooth_mm) + 1)
+    idx = np.flatnonzero(valid)
+    idx = idx[idx >= int(T) + mm2px(min_tb_mm)]
+    info = {'flags': [], 'n_valid': int(idx.size)}
+    if idx.size < mm2px(tail_mm) * 2:
+        info['flags'].append('B:no_valid_rows')
+        return h, info
+    y_min = int(idx[np.argmin(ms[idx])])
+    info.update(y_min=y_min, mass_min=round(float(ms[y_min]), 1))
+    if idx.max() - y_min < mm2px(tail_mm):
+        info['flags'].append('B:narrowing_not_passed')       # кадр обрезан выше сужения
+        return h, info
+    limit = float(ms[y_min]) * (1.0 + delta_frac)
+    info['limit'] = round(limit, 1)
+    run = mm2px(run_mm)
+    above = idx[idx < y_min]
+    for y in above[::-1]:                                     # вверх от минимума
+        seg = ms[max(0, y - run + 1):y + 1]
+        if (seg > limit).all():
+            info['mass_at_B'] = round(float(ms[y]), 1)
+            return int(y), info
+    info['flags'].append('B:no_trochanteric_mass')
+    return h, info
+
+
+def B7_medial_local_deviation(img: np.ndarray, mask: np.ndarray, T: int, dev_mm: float = 2.0,
+                              fit_lo_mm: float = 8.0, fit_hi_mm: float = 45.0,
+                              smooth_mm: float = 2.0, min_tb_mm: float = 25.0,
+                              max_width_mm: float = 55.0):
+    """B7. Низ ROI по медиальному контуру с ЛОКАЛЬНОЙ опорной прямой.
+
+    Для каждой строки прямая (Тейл—Сен) строится по контуру на 8-45 мм ниже
+    неё и сравнивается с самим контуром: выше низа вертелов контур отходит
+    медиальнее прямой. B — верхняя строка непрерывного участка, где отклонение
+    держится ниже dev_mm.
+
+    Отличие от B2: там прямая одна на весь кадр и берётся по дистальному
+    диафизу, а диафиз изогнут, поэтому экстраполяция вверх уходит латеральнее
+    истинного контура и отклонение «обнаруживается» на 2-4 см ниже вертелов.
+    """
+    h = mask.shape[0]
+    xl, xm, w = _profiles(mask)
+    _, valid = row_mass(img, mask, max_width_mm)
+    xs = moving_average(xm.astype(float), 2 * mm2px(smooth_mm) + 1)
+    dev = dev_mm / px2mm(1)
+    lo, hi, need = mm2px(fit_lo_mm), mm2px(fit_hi_mm), mm2px(15.0)
+    info = {'flags': []}
+    y0 = int(T) + mm2px(min_tb_mm)
+    hits = []
+    for y in range(y0, h):
+        if not valid[y]:
+            continue
+        rows = np.flatnonzero(valid[y + lo:min(h, y + hi)]) + y + lo
+        if rows.size < need:
+            continue
+        a, b = _theil_sen(rows.astype(float), xs[rows])
+        hits.append((y, xs[y] - (a * y + b)))
+    if not hits:
+        info['flags'].append('B:no_fit_rows')
+        return h, info
+    inside = [y for y, r in hits if r <= dev]
+    if not inside:
+        info['flags'].append('B:contour_never_straight')
+        return h, info
+    info['dev_top_mm'] = round(px2mm(hits[0][1]), 1)
+    return int(min(inside)), info
+
+
 def B4_anatomical_offset(T: int, d_tb_mm: float = D_TB_MM):
     """B4. Запасное правило: B = T + d_TB (калиброванная анатомическая константа)."""
     return int(T) + mm2px(d_tb_mm), {'flags': ['B:fallback_anatomical']}
@@ -414,3 +576,4 @@ L_VARIANTS = {'L1': L1_lower_fraction, 'L2': L2_jump_guard, 'L4': L4_bulge_vs_sh
 T_VARIANTS = {'T1': T1_wide_part, 'T2': T2_band_component_top, 'T3': T3_contour_first_min}
 B_VARIANTS = {'B1': B1_width_stabilisation, 'B2': B2_medial_line_deviation,
               'B3': B3_distance_ridge}
+# B5 принимает ещё и полутоновый кадр, поэтому живёт отдельно от реестра.

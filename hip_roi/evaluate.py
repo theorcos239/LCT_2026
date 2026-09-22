@@ -77,7 +77,7 @@ def run_all(frames: pd.DataFrame, methods: list[str]):
             row.pop('flags', None)
             if m == 'kit2':
                 bc = res['diag'].get('B_candidates', {})
-                row.update(B1=bc.get('B1'), B2=bc.get('B2'), B3=bc.get('B3'))
+                row.update(B_anchor=bc.get('anchor'), B6=bc.get('B6'), B7=bc.get('B7'))
             rows[m].append(row)
     print(f'обработано {len(frames)} кадров x {len(methods)} комплектов за {time.perf_counter() - t0:.1f} с')
     return {m: pd.DataFrame(v) for m, v in rows.items()}, imgs
@@ -104,18 +104,29 @@ def confusion(df: pd.DataFrame) -> dict:
 
 
 def calibrate_d_tb(df2: pd.DataFrame) -> dict:
-    """d_TB по kit2: кадры, где B1 и B2 найдены, согласны (<= 10 мм) и диафиз виден."""
-    d = df2.dropna(subset=['B1', 'B2', 'T_px'])
-    d = d[(d.B1 < d.rows) & (d.B2 < d.rows)]
-    d = d[(d.B1 - d.B2).abs() <= 10 / px2mm(1)]
-    dist = ((d.B1 + d.B2) / 2 - d.T_px).to_numpy() * MM_PER_PX
-    return {
-        'n_frames': int(len(d)),
-        'median_mm': None if len(d) == 0 else round(float(np.median(dist)), 1),
-        'p10_mm': None if len(d) == 0 else round(float(np.percentile(dist, 10)), 1),
-        'p90_mm': None if len(d) == 0 else round(float(np.percentile(dist, 90)), 1),
-        'current_constant_mm': D_TB_MM,
-    }
+    """Разброс измеренных оценок низа ROI вокруг анатомического якоря.
+
+    Показывает, насколько кадр вообще позволяет измерить низ ROI: B6 (по тону)
+    и B7 (по медиальному контуру) — независимые правила, и чем шире их
+    расхождение, тем меньше смысла в «измеренном» низе.
+    """
+    d = df2.dropna(subset=['T_px'])
+    out = {'current_constant_mm': D_TB_MM, 'n_frames': int(len(d))}
+    for col in ('B6', 'B7'):
+        if col not in d.columns:
+            continue
+        v = d[(d[col].notna()) & (d[col] < d.rows)]
+        dist = (v[col] - v.T_px).to_numpy() * MM_PER_PX
+        out[col] = {'n': int(len(v)),
+                    'median_mm': None if not len(v) else round(float(np.median(dist)), 1),
+                    'p10_mm': None if not len(v) else round(float(np.percentile(dist, 10)), 1),
+                    'p90_mm': None if not len(v) else round(float(np.percentile(dist, 90)), 1)}
+    both = d[(d.B6 < d.rows) & (d.B7 < d.rows)] if {'B6', 'B7'} <= set(d.columns) else d.iloc[:0]
+    if len(both):
+        spread = (both.B6 - both.B7).abs().to_numpy() * MM_PER_PX
+        out['B6_vs_B7_spread_mm'] = {'median': round(float(np.median(spread)), 1),
+                                     'p90': round(float(np.percentile(spread, 90)), 1)}
+    return out
 
 
 def sheet_for(df: pd.DataFrame, imgs: dict, method: str, sel: pd.DataFrame, path: Path, cols=4):

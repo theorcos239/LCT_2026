@@ -3,7 +3,7 @@
 
     kit0 — без ориентиров: только длина сканирования H·s (контрольная точка)
     kit1 — «Профили»:  L2 + T1 + B1
-    kit2 — «Контур»:   L4 -> T3 -> {B1, B2} консенсус -> B4 запас -> L3   (основной)
+    kit2 — «Контур»:   L4 -> T3 -> низ по якорю T+d_TB с поправкой -> L3  (основной)
     kit3 — «Бедро отдельно от таза»: водораздел -> ось диафиза -> T3/T5 -> B3
     custom — любая комбинация L*/T*/B* из landmarks.py
 
@@ -15,9 +15,9 @@ from __future__ import annotations
 import numpy as np
 
 from . import landmarks as lm
-from .geometry import (BOTTOM_MM, D_TB_MM, LAT_MM, MM_PER_PX, TOP_MM, bone_mask,
-                       detect_dual_femur, mm2px, px2mm, to_lateral_left,
-                       x_to_original)
+from .geometry import (BOTTOM_MM, D_TB_BAND_MM, D_TB_MM, LAT_MM, MM_PER_PX,
+                       TOP_MM, bone_mask, detect_dual_femur, mm2px, px2mm,
+                       to_lateral_left, to_uint8, x_to_original)
 from .separate import Rotation, separate_femur, shaft_axis
 
 METHODS = ('kit0', 'kit1', 'kit2', 'kit3', 'custom')
@@ -77,17 +77,45 @@ def _result(method, side, shape, T, B, L, apex, flags, diag):
 
 
 def _prepare(img, side):
-    """Маска кости в нормализованной ориентации + проверка «две ноги»."""
+    """Кадр и маска кости в нормализованной ориентации + проверка «две ноги»."""
     img = np.asarray(img)
     if img.ndim != 2:
         raise ValueError('ожидается двумерный массив пикселей')
+    norm = to_lateral_left(to_uint8(img), side)
     mask = to_lateral_left(bone_mask(img), side)
     flags = []
     if detect_dual_femur(mask):
         flags += ['render:dual_femur', 'scale:unknown']
     if not mask.any():
         flags.append('mask:empty')
-    return mask, flags
+    return norm, mask, flags
+
+
+def _anchored_B(norm, mask, T, h, flags, diag):
+    """Низ ROI: анатомический якорь T + d_TB, поправленный измерением по кадру.
+
+    Якорь — потому что ни одно правило по силуэту не находит уровень малого
+    вертела устойчиво: B1 (стабилизация ширины) смещён вниз на 2-4 см, B7
+    (локальная прямая по медиальному контуру) — вверх; измерения расходятся
+    между собой на 2-3 см. Медиана трёх оценок (B6 по тону, B7 по контуру и
+    сам якорь) зажимается в полосу якорь ± D_TB_BAND_MM: кадр может сдвинуть
+    границу в пределах анатомического разброса, но не увести её на сантиметры.
+    """
+    anchor = int(T) + mm2px(D_TB_MM)
+    b6, i6 = lm.B6_trochanteric_mass_end(norm, mask, T)
+    b7, i7 = lm.B7_medial_local_deviation(norm, mask, T)
+    cand = [anchor] + [b for b in (b6, b7) if b < h]
+    B = int(np.median(cand)) if len(cand) > 1 else anchor
+    band = mm2px(D_TB_BAND_MM)
+    if B < anchor - band or B > anchor + band:
+        flags.append('B:clamped_to_anchor')
+        B = int(np.clip(B, anchor - band, anchor + band))
+    if b6 < h and b7 < h and abs(b6 - b7) > mm2px(20.0):
+        flags.append('B:estimates_disagree')
+    if b6 >= h and b7 >= h:
+        flags.append('B:anchor_only')
+    diag.update(B6=i6, B7=i7, B_candidates={'anchor': anchor, 'B6': b6, 'B7': b7})
+    return min(B, h)
 
 
 def _check_shaft_visible(T, B, h, flags, slack_mm: float = 40.0):
@@ -151,7 +179,7 @@ def kit0(img, side):
 #  kit1 — «Профили»
 # --------------------------------------------------------------------------- #
 def kit1(img, side):
-    mask, flags = _prepare(img, side)
+    _, mask, flags = _prepare(img, side)
     h, w = mask.shape
     diag = {}
     L, iL = lm.L2_jump_guard(mask)
@@ -171,13 +199,39 @@ def kit1(img, side):
 #  kit2 — «Контур» (основной)
 # --------------------------------------------------------------------------- #
 def kit2(img, side):
-    mask, flags = _prepare(img, side)
+    norm, mask, flags = _prepare(img, side)
     h, w = mask.shape
     diag = {}
-    L, iL = lm.L4_bulge_vs_shaft_line(mask)      # старт контура — на вертеле, не на низу диафиза
-    flags += iL['flags']
+    L, iL, T, iT = _find_LT(mask, flags)
     if L is None:
         return _result('kit2', side, mask.shape, None, None, None, None, flags, diag)
+    if T == 0:
+        # контур ушёл по тазу до верхнего края: на полутоновых кадрах слабый
+        # порог сливает кость с мягкими тканями. Повторяем по строгой маске.
+        strict = to_lateral_left(bone_mask(img, weak_frac=1.0), side)
+        f2 = []
+        L2, iL2, T2v, iT2 = _find_LT(strict, f2)
+        if T2v is not None and T2v > 0:
+            flags.append('mask:strict_fallback')
+            mask, L, iL, T, iT = strict, L2, iL2, T2v, iT2
+            flags += f2
+            norm = norm
+    if T is None:
+        return _result('kit2', side, mask.shape, None, None, L, None, flags, diag)
+    B = _anchored_B(norm, mask, T, h, flags, diag)
+    L3, iL3 = lm.L3_in_range(mask, T, B)
+    if L3 is not None:
+        L = L3
+    diag.update(L=iL, T=iT, L3=iL3)
+    return _result('kit2', side, mask.shape, T, B, L, iT['apex'], flags, diag)
+
+
+def _find_LT(mask, flags):
+    """Латеральный край и верхушка вертела на данной маске."""
+    L, iL = lm.L4_bulge_vs_shaft_line(mask)
+    flags += iL['flags']
+    if L is None:
+        return None, iL, None, {}
     T, iT = lm.T3_contour_first_min(mask, L, iL['yL'])
     if T is None or T == 0:
         # контур без седловины (None) или ушёл по тазу до верхнего края (0):
@@ -188,27 +242,14 @@ def kit2(img, side):
             flags.append('T:fallback_T2')
             T, iT = T2, {**iT, **iT2}
     flags += iT['flags']
-    if T is None:
-        return _result('kit2', side, mask.shape, None, None, L, None, flags, diag)
-    B1, iB1 = lm.B1_width_stabilisation(mask, T)
-    B2, iB2 = lm.B2_medial_line_deviation(mask, T)
-    B3, iB3 = lm.B3_distance_ridge(mask, T)
-    flags += iB1['flags'] + iB2['flags']
-    B = _finish_B(T, B1, B2, h, flags, diag)
-    B = _check_shaft_visible(T, B, h, flags)
-    L3, iL3 = lm.L3_in_range(mask, T, h if B is None else B)
-    if L3 is not None:
-        L = L3
-    diag.update(L=iL, T=iT, B1=iB1, B2=iB2, B3=iB3, L3=iL3,
-                B_candidates={'B1': B1, 'B2': B2, 'B3': B3})
-    return _result('kit2', side, mask.shape, T, B, L, iT['apex'], flags, diag)
+    return L, iL, T, iT
 
 
 # --------------------------------------------------------------------------- #
 #  kit3 — «Бедро отдельно от таза»
 # --------------------------------------------------------------------------- #
 def kit3(img, side):
-    mask, flags = _prepare(img, side)
+    norm, mask, flags = _prepare(img, side)
     h, w = mask.shape
     diag = {}
     if not mask.any():
@@ -258,7 +299,7 @@ def kit3(img, side):
 #  custom — произвольная комбинация
 # --------------------------------------------------------------------------- #
 def kit_custom(img, side, L='L2', T='T3', B='B1'):
-    mask, flags = _prepare(img, side)
+    _, mask, flags = _prepare(img, side)
     h, w = mask.shape
     diag = {'combo': (L, T, B)}
     Lv, iL = lm.L_VARIANTS[L](mask)

@@ -23,9 +23,15 @@ BOTTOM_MM = 30.0    # «3 см снизу»
 LAT_MM = 20.0       # «2 см от края ... в зависимости от бедра»
 
 # Анатомический прибор: расстояние верхушка большого вертела -> нижняя граница
-# малого вертела. Калибруется на обучающих кадрах (evaluate.py, поле
-# d_TB_calibration в metrics.json) и фиксируется здесь.
-D_TB_MM = 72.0
+# малого вертела (низ ROI). 50 мм — по четырём кадрам, размеченным вручную по
+# анатомии (35, 41, 45, 60 мм), и по анатомической норме 4-6 см.
+#
+# Прежнее значение 72 мм было получено усреднением оценок B1/B2 и оказалось
+# завышенным: оба правила ищут, где бедро становится «ровным диафизом», а
+# проксимальный диафиз расширяется кверху плавно, поэтому они ставят низ ROI
+# на 2-4 см ниже вертелов. См. README, раздел «Низ ROI».
+D_TB_MM = 50.0
+D_TB_BAND_MM = 15.0     # в этих пределах измерение по кадру может сдвинуть якорь
 
 EIGHT = np.ones((3, 3), bool)
 
@@ -109,18 +115,32 @@ def bone_threshold(img: np.ndarray) -> int:
     return multi_otsu3(v)[0] if v.size else 255
 
 
-def bone_mask(img: np.ndarray, min_component_px: int = 300) -> np.ndarray:
-    """Кость = пиксели ярче нижнего порога трёхклассового Оцу (по ненулевым),
-    opening 3x3, компоненты >= 300 px.
+def bone_mask(img: np.ndarray, min_component_px: int = 300, weak_frac: float = 0.55) -> np.ndarray:
+    """Кость с гистерезисным порогом: сильный порог задаёт зёрна, слабый —
+    границу. Opening 3x3, заливка дырок, компоненты >= 300 px.
 
-    Один рецепт для bone-map и полутоновых кадров (см. multi_otsu3).
+    Сильный порог — нижний порог трёхклассового Оцу (см. multi_otsu3), слабый —
+    weak_frac от него. Одним порогом обойтись нельзя: он подобран по всему
+    кадру, а тон кости внутри бедра падает до 0.5-0.7 от него (разрежённая
+    трабекулярная кость вертельной области, порозная кость). На таких кадрах
+    одиночный порог терял вертельную массу целиком — вместе с верхушкой
+    большого вертела, от которой отсчитывается верх ROI.
+
+    Слабый порог не «раздувает» наружную границу: снаружи яркость падает от
+    порога до нуля за 3-5 px, поэтому граница сдвигается на 1-2 px (0.6-1.2 мм),
+    тогда как внутри кости возвращаются целые области.
     """
     img = to_uint8(img)
     v = img[img > 0]
     if v.size == 0:
         return np.zeros(img.shape, bool)
-    m = img > multi_otsu3(v)[0]
-    m = ndi.binary_opening(m, structure=EIGHT, iterations=1)
+    strong = multi_otsu3(v)[0]
+    weak = max(int(round(strong * weak_frac)), 5)
+    seeds = ndi.binary_opening(img > strong, structure=EIGHT, iterations=1)
+    m = ndi.binary_opening(img > weak, structure=EIGHT, iterations=1)
+    lbl, n = ndi.label(m, structure=EIGHT)
+    if n:
+        m = np.isin(lbl, np.unique(lbl[seeds & (lbl > 0)]))     # только с зерном
     # дырки внутри кости (тёмная трабекулярная зона вертела) — не разрывы:
     # без заливки правило «первый разрыв = медиальный край» упрётся в дырку
     m = ndi.binary_fill_holes(m)
@@ -130,6 +150,29 @@ def bone_mask(img: np.ndarray, min_component_px: int = 300) -> np.ndarray:
     sizes = ndi.sum(m, lbl, index=np.arange(1, n + 1))
     keep = np.flatnonzero(sizes >= min_component_px) + 1
     return np.isin(lbl, keep)
+
+
+def unscanned_region(img: np.ndarray, min_px: int = 200) -> np.ndarray:
+    """Незасканированные вырезы, примыкающие к нижним углам кадра.
+
+    В экспорте Lunar нижний медиальный угол часто «срезан» прямоугольником
+    точных нулей (поле сканирования короче кадра). Строку, задетую таким
+    вырезом, нельзя использовать для измерений по тону: сегмент кости в ней
+    обрезан не анатомией, а границей поля.
+    """
+    img = to_uint8(img)
+    z = img == 0
+    lbl, n = ndi.label(z, structure=np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], bool))
+    if n == 0:
+        return np.zeros(img.shape, bool)
+    h, w = img.shape
+    keep = set()
+    for corner in ((h - 1, 0), (h - 1, w - 1)):
+        k = lbl[corner]
+        if k:
+            keep.add(int(k))
+    out = np.isin(lbl, sorted(keep)) if keep else np.zeros(img.shape, bool)
+    return out if out.sum() >= min_px else np.zeros(img.shape, bool)
 
 
 def component_containing(mask: np.ndarray, point: tuple[int, int]) -> np.ndarray:
