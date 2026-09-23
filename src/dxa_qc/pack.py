@@ -22,11 +22,14 @@ import numpy as np
 from PIL import Image
 
 from . import points as P
+from .points import HIP, SPINE_CORE
 from .data import guess_region, read_dicom, scan_studies, unique_images
 
 UNLABELED, ABSENT, LABELED, OTHER = 0, 1, 2, 3
-# review — спорный снимок, разбираем с разметчиком; в обучение до разбора не идёт.
-SKIP_FLAGS = {"out_of_scope", "unreadable", "review"}
+SKIP_FLAGS = {"out_of_scope", "unreadable"}
+# Флаг review сам по себе снимок не бракует: им помечают и полностью размеченные.
+# Негодные отсеиваются по содержанию — по доле реально поставленных точек.
+MIN_PLACED_FRACTION = 0.5
 # p1 — закончен первый проход (13 основных точек), боковые края тел ещё не размечены:
 # они остаются UNLABELED и в потерях не участвуют.
 STATUSES = ("done", "p1")
@@ -100,10 +103,14 @@ def build(annotations: list[str | Path], html: str | Path, studies_root: str | P
             # выбросы вне холста в обучение не идут, они уходят в смоук-тест
             skipped.append((uid, f"размер {h}×{w} больше холста {canvas[0]}×{canvas[1]}"))
             continue
-        if not a["points"]:
-            # Все точки отмечены отсутствующими: либо снимок не наш, либо разметчик
-            # не смог разобрать анатомию. Обучать этому молчанию нельзя.
-            skipped.append((uid, "нет ни одной размеченной точки"))
+        # Долю считаем от основных точек: боковые края тел — отдельный проход,
+        # их отсутствие не повод браковать снимок.
+        essential = SPINE_CORE if region == "spine" else HIP
+        placed = sum(1 for n in essential if n in a["points"])
+        if placed < MIN_PLACED_FRACTION * len(essential):
+            # Почти всё помечено отсутствующим: обычно разметчик не смог разобрать
+            # анатомию, а не структур нет в кадре. Учить этому молчанию нельзя.
+            skipped.append((uid, f"поставлено меньше половины основных точек ({placed}/{len(essential)})"))
             continue
 
         pts = {k: (v["x"], v["y"]) for k, v in a["points"].items()}

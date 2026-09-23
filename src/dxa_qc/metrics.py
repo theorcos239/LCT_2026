@@ -28,11 +28,12 @@ def per_point(names: list[str], pred: np.ndarray, conf: np.ndarray, true: np.nda
         fn = (~found[:, c] & visible[:, c] & lab).sum()
         tn = (~found[:, c] & ~visible[:, c] & lab).sum()
         row = dict(
-            point=name, n=len(e),
+            point=name, n=len(e), n_absent=int(tn + fp),
             median_mm=np.median(e) if len(e) else np.nan,
             p90_mm=np.percentile(e, 90) if len(e) else np.nan,
             f1_visible=2 * tp / max(2 * tp + fp + fn, 1),
-            recall_absent=tn / max(tn + fp, 1),
+            # неприменимо, если отсутствующих примеров не было вовсе
+            recall_absent=tn / (tn + fp) if tn + fp else np.nan,
         )
         for t in PCK_THRESHOLDS_MM:
             row[f"pck@{t:g}mm"] = (e <= t).mean() if len(e) else np.nan
