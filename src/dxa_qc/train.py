@@ -82,7 +82,9 @@ def predict(model, loader, device, window: int):
 
 
 def run_fold(cfg: dict, data: dict, fold: int, device: torch.device,
-             resume: bool = True) -> dict:
+             resume: bool = True, on_checkpoint=None) -> dict:
+    """on_checkpoint(fold, epoch, out_dir) вызывается после записи fold{N}_last.pt —
+    например, чтобы скопировать чекпоинты на Диск."""
     names = data["names"]
     studies = np.array(data["studies"])
     folds = foldsmod.load(cfg["data"]["folds"], set(map(str, studies)))
@@ -156,6 +158,8 @@ def run_fold(cfg: dict, data: dict, fold: int, device: torch.device,
                          "epoch": epoch, "history": history, "config": cfg, "fold": fold,
                          "best_median_mm": best["median_mm"], "best_epoch": best["epoch"]},
                         last_path)
+            if on_checkpoint is not None:
+                on_checkpoint(fold, epoch, out_dir)
         if epoch - best["epoch"] >= t["patience"]:
             break
         print(f"fold {fold} epoch {epoch:3d} loss {loss.item():.4f} median {median:.2f} мм")
@@ -170,11 +174,12 @@ def run_fold(cfg: dict, data: dict, fold: int, device: torch.device,
     return best
 
 
-def train_all(cfg: dict, resume: bool = True) -> dict:
+def train_all(cfg: dict, resume: bool = True, on_checkpoint=None) -> dict:
     """Обучение по всем фолдам конфига. Возвращает OOF-предсказания, метрики и пороги.
 
     С resume=True продолжает прерванный прогон: готовые фолды пропускает, незаконченный
-    поднимает с последнего чекпоинта.
+    поднимает с последнего чекпоинта. on_checkpoint(fold, epoch, out_dir) вызывается
+    после каждой периодической записи — например, для копирования на Диск.
     """
     set_seed(cfg["seed"], cfg["deterministic"])
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -191,7 +196,7 @@ def train_all(cfg: dict, resume: bool = True) -> dict:
             print(f"fold {fold}: уже обучен, пропускаем ({done})")
             oof[fold] = dict(np.load(done))
         else:
-            oof[fold] = run_fold(cfg, data, fold, device, resume)["oof"]
+            oof[fold] = run_fold(cfg, data, fold, device, resume, on_checkpoint)["oof"]
     keys = ("pred", "conf", "true", "visible", "labeled", "index")
     merged = {k: np.concatenate([oof[f][k] for f in oof]) for k in keys}
 
