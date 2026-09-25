@@ -299,8 +299,8 @@
     "region_accuracy": 1.0,
     "processed": 252,
     "failed": 0,
-    "seconds_per_image_median": 0.02914534998126328,
-    "seconds_per_image_p95": 0.03843818502500653
+    "seconds_per_image_median": 0.029691250005271286,
+    "seconds_per_image_p95": 0.03785559996613301
   },
   "oof_reference": {
     "spine_axis": {
@@ -539,17 +539,17 @@
       "measured": 148
     },
     "hip_roi": {
-      "n": 150,
+      "n": 149,
       "tp": 3,
-      "tn": 139,
+      "tn": 138,
       "fp": 4,
       "fn": 4,
       "sensitivity": 0.429,
       "specificity": 0.972,
-      "undecided": 0,
+      "undecided": 1,
       "violations_predicted": 7,
       "violations_expert": 7,
-      "ms_per_frame_median": 28.8,
+      "ms_per_frame_median": 15.2,
       "flags_top": {
         "B:estimates_disagree": 44,
         "B:anchor_only": 9,
@@ -557,6 +557,7 @@
         "B:clamped_to_anchor": 4,
         "T:at_top_edge": 4,
         "mask:strict_fallback": 4,
+        "measure:implausible_shaft": 3,
         "T:fallback_T2": 1
       }
     }
