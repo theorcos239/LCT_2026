@@ -1,0 +1,29 @@
+# Данные в образ не кладём — монтируются снаружи (и это 41 МБ медицинских снимков)
+НД_для_обучения/
+data/
+Processing/
+notebooks/
+runs/
+
+# Исследовательская часть, в сервисе не используется
+src/
+configs/
+
+# Результаты прогонов и отчёты
+*.xlsx
+*.csv
+!folds.csv
+!region_clf/labels.csv
+service/evaluation.csv
+spine_qc/measurements.csv
+hip_rotation/measurements.csv
+hip_roi/eval/
+hip_roi/contradictions/
+
+.git/
+.gitignore
+__pycache__/
+*.pyc
+*.pdf
+*.md
+!README.md
