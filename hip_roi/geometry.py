@@ -159,20 +159,24 @@ def unscanned_region(img: np.ndarray, min_px: int = 200) -> np.ndarray:
     точных нулей (поле сканирования короче кадра). Строку, задетую таким
     вырезом, нельзя использовать для измерений по тону: сегмент кости в ней
     обрезан не анатомией, а границей поля.
+
+    Берётся компонента точных нулей, примыкающая к нижнему углу кадра. Обычно
+    это весь фон, но на кость она выходит только там, где тон обрывается в
+    ноль скачком, то есть на границе поля: у настоящего края кости яркость
+    спадает до нуля за 3-5 px, и эти промежуточные значения фоном не являются.
     """
     img = to_uint8(img)
     z = img == 0
     lbl, n = ndi.label(z, structure=np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], bool))
-    if n == 0:
-        return np.zeros(img.shape, bool)
     h, w = img.shape
-    keep = set()
+    out = np.zeros(img.shape, bool)
+    if n == 0:
+        return out
     for corner in ((h - 1, 0), (h - 1, w - 1)):
-        k = lbl[corner]
-        if k:
-            keep.add(int(k))
-    out = np.isin(lbl, sorted(keep)) if keep else np.zeros(img.shape, bool)
-    return out if out.sum() >= min_px else np.zeros(img.shape, bool)
+        k = int(lbl[corner])
+        if k and int((lbl == k).sum()) >= min_px:
+            out |= lbl == k
+    return out
 
 
 def component_containing(mask: np.ndarray, point: tuple[int, int]) -> np.ndarray:

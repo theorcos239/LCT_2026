@@ -18,35 +18,36 @@
    }
   },
   "kit1": {
-   "n": 144,
-   "tp": 6,
-   "tn": 112,
-   "fp": 25,
-   "fn": 1,
-   "sensitivity": 0.857,
-   "specificity": 0.818,
-   "undecided": 6,
-   "violations_predicted": 31,
+   "n": 147,
+   "tp": 4,
+   "tn": 130,
+   "fp": 10,
+   "fn": 3,
+   "sensitivity": 0.571,
+   "specificity": 0.929,
+   "undecided": 3,
+   "violations_predicted": 14,
    "violations_expert": 7,
-   "ms_per_frame_median": 14.5,
+   "ms_per_frame_median": 14.1,
    "flags_top": {
-    "B:not_stabilised": 12,
-    "B:diaphysis_not_reached": 8,
-    "mask:suspect_wide_shaft": 7
+    "B:estimates_disagree": 37,
+    "B:anchor_only": 20,
+    "B:clamped_to_anchor": 20,
+    "measure:implausible_shaft": 5
    }
   },
   "kit2": {
-   "n": 150,
+   "n": 149,
    "tp": 3,
-   "tn": 139,
+   "tn": 138,
    "fp": 4,
    "fn": 4,
    "sensitivity": 0.429,
    "specificity": 0.972,
-   "undecided": 0,
+   "undecided": 1,
    "violations_predicted": 7,
    "violations_expert": 7,
-   "ms_per_frame_median": 28.8,
+   "ms_per_frame_median": 15.2,
    "flags_top": {
     "B:estimates_disagree": 44,
     "B:anchor_only": 9,
@@ -54,25 +55,29 @@
     "B:clamped_to_anchor": 4,
     "T:at_top_edge": 4,
     "mask:strict_fallback": 4,
+    "measure:implausible_shaft": 3,
     "T:fallback_T2": 1
    }
   },
   "kit3": {
-   "n": 150,
-   "tp": 6,
-   "tn": 90,
-   "fp": 53,
-   "fn": 1,
-   "sensitivity": 0.857,
-   "specificity": 0.629,
-   "undecided": 0,
-   "violations_predicted": 59,
+   "n": 148,
+   "tp": 3,
+   "tn": 134,
+   "fp": 7,
+   "fn": 4,
+   "sensitivity": 0.429,
+   "specificity": 0.95,
+   "undecided": 2,
+   "violations_predicted": 10,
    "violations_expert": 7,
-   "ms_per_frame_median": 110.6,
+   "ms_per_frame_median": 72.2,
    "flags_top": {
-    "B:ridge_not_flat": 55,
+    "B:estimates_disagree": 42,
     "axis:tilt_too_large": 26,
+    "B:anchor_only": 11,
     "T:T3_T5_disagree": 11,
+    "B:clamped_to_anchor": 6,
+    "measure:implausible_shaft": 5,
     "sep:failed": 3,
     "T:fallback_T5": 1
    }
@@ -193,11 +198,11 @@
   }
  },
  "pairwise_verdict_agreement": {
-  "kit0~kit1": 0.765,
-  "kit0~kit2": 0.961,
-  "kit0~kit3": 0.621,
-  "kit1~kit2": 0.771,
-  "kit1~kit3": 0.693,
-  "kit2~kit3": 0.66
+  "kit0~kit1": 0.889,
+  "kit0~kit2": 0.948,
+  "kit0~kit3": 0.922,
+  "kit1~kit2": 0.889,
+  "kit1~kit3": 0.876,
+  "kit2~kit3": 0.961
  }
 }

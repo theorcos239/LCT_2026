@@ -75,8 +75,13 @@ def synthetic_hip(top_mm=45.0, bottom_mm=50.0, lat_mm=35.0, d_tb_mm=50.0, W=280,
     img[pelvis] = 150
     img[bone] = 160
     img[_disc(shape, T + m(22), L + m(15), m(12), m(8))] = 90                    # трабекулярная зона
+    # край кости на настоящих кадрах не обрывается, а спадает за 3-5 px:
+    # без этого фон кадра примыкает к кости вплотную и выглядит как обрез поля
+    from scipy import ndimage as ndi
+    img = ndi.gaussian_filter(img.astype(np.float32), 1.6)
     yy, xx = np.mgrid[0:H, 0:W]
-    img[(img == 0) & (((yy * 7 + xx * 3) % 11) == 0)] = 25                        # крапинки гало
+    img[(img < 2) & (((yy * 7 + xx * 3) % 11) == 0)] = 25                         # крапинки гало
+    img = np.clip(img, 0, 255).astype(np.uint8)
     img = to_lateral_left(img, side)                                              # для lh зеркалим
     return img, T, B, L
 

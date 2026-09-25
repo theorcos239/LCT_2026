@@ -2,9 +2,9 @@
 """Сборка вариантов алгоритма («комплекты») и единая точка входа.
 
     kit0 — без ориентиров: только длина сканирования H·s (контрольная точка)
-    kit1 — «Профили»:  L2 + T1 + B1
+    kit1 — «Профили»:  L2 + T1 + низ по якорю (B1 — в диагностике)
     kit2 — «Контур»:   L4 -> T3 -> низ по якорю T+d_TB с поправкой -> L3  (основной)
-    kit3 — «Бедро отдельно от таза»: водораздел -> ось диафиза -> T3/T5 -> B3
+    kit3 — «Бедро отдельно от таза»: водораздел -> ось диафиза -> T3/T5 -> низ по якорю
     custom — любая комбинация L*/T*/B* из landmarks.py
 
 Все комплекты возвращают словарь одной формы (см. _result). Координаты в
@@ -45,6 +45,8 @@ def _result(method, side, shape, T, B, L, apex, flags, diag):
         roi_ok = True
     else:
         roi_ok = None
+    if roi_ok is True and 'measure:implausible_shaft' in flags:
+        roi_ok = None                 # «норму» по недостоверной маске не выдаём
 
     parts = []
     if top_ok is False:
@@ -84,8 +86,6 @@ def _prepare(img, side):
     norm = to_lateral_left(to_uint8(img), side)
     mask = to_lateral_left(bone_mask(img), side)
     flags = []
-    if detect_dual_femur(mask):
-        flags += ['render:dual_femur', 'scale:unknown']
     if not mask.any():
         flags.append('mask:empty')
     return norm, mask, flags
@@ -116,6 +116,25 @@ def _anchored_B(norm, mask, T, h, flags, diag):
         flags.append('B:anchor_only')
     diag.update(B6=i6, B7=i7, B_candidates={'anchor': anchor, 'B6': b6, 'B7': b7})
     return min(B, h)
+
+
+SHAFT_MM_RANGE = (20.0, 48.0)      # физически возможная ширина диафиза бедра
+
+
+def _check_shaft_plausible(norm, mask, flags, diag):
+    """Внутренняя линейка: ширина диафиза вне физических пределов — маска или
+    масштаб не в порядке, «норму» такому кадру выдавать нельзя.
+
+    Вердикт при этом не переворачивается: найденное нарушение остаётся
+    нарушением (обрезанный кадр как раз и даёт широкий «диафиз»), а вот
+    «всё в порядке» превращается в «не определено» (см. _result).
+    """
+    sw = lm.shaft_width_mm(norm, mask)
+    diag['shaft_width_mm'] = sw
+    lo, hi = SHAFT_MM_RANGE
+    if sw is None or not (lo <= sw <= hi):
+        flags.append('measure:implausible_shaft')
+    return sw
 
 
 def _check_shaft_visible(T, B, h, flags, slack_mm: float = 40.0):
@@ -179,7 +198,7 @@ def kit0(img, side):
 #  kit1 — «Профили»
 # --------------------------------------------------------------------------- #
 def kit1(img, side):
-    _, mask, flags = _prepare(img, side)
+    norm, mask, flags = _prepare(img, side)
     h, w = mask.shape
     diag = {}
     L, iL = lm.L2_jump_guard(mask)
@@ -188,10 +207,11 @@ def kit1(img, side):
         return _result('kit1', side, mask.shape, None, None, None, None, flags, diag)
     T, iT = lm.T1_wide_part(mask, L, iL['yL'])
     flags += iT['flags']
-    B, iB = lm.B1_width_stabilisation(mask, T)
-    flags += iB['flags']
-    B = _check_shaft_visible(T, B, h, flags)
-    diag.update(L=iL, T=iT, B=iB)
+    B1, iB1 = lm.B1_width_stabilisation(mask, T)     # оставлен для сравнения
+    B = _anchored_B(norm, mask, T, h, flags, diag)
+    _check_shaft_plausible(norm, mask, flags, diag)
+    diag.update(L=iL, T=iT, B1=iB1)
+    diag['B_candidates']['B1'] = B1
     return _result('kit1', side, mask.shape, T, B, L, iT['apex'], flags, diag)
 
 
@@ -222,6 +242,7 @@ def kit2(img, side):
     L3, iL3 = lm.L3_in_range(mask, T, B)
     if L3 is not None:
         L = L3
+    _check_shaft_plausible(norm, mask, flags, diag)
     diag.update(L=iL, T=iT, L3=iL3)
     return _result('kit2', side, mask.shape, T, B, L, iT['apex'], flags, diag)
 
@@ -275,23 +296,18 @@ def kit3(img, side):
     if T5r is not None and abs(T5r - Tr) > mm2px(5):
         flags.append('T:T3_T5_disagree')
     flags += iTr['flags']
-    Br, iBr = lm.B3_distance_ridge(Fr, Tr)
-    flags += iBr['flags']
+    Br, iBr = lm.B3_distance_ridge(Fr, Tr)           # оставлен для сравнения
 
     # обратно в исходную систему координат
     apex = rot.point_to_orig(*iTr['apex'])
     T = min(max(apex[0], 0), h - 1)
-    if Br >= Fr.shape[0]:
-        B = h
-    else:
-        xb = iBr.get('ridge_x', Lr)
-        by, _ = rot.point_to_orig(Br, xb)
-        B = min(max(by, T + 1), h)
-    B = _check_shaft_visible(T, B, h, flags)
+    B = _anchored_B(norm, mask, T, h, flags, diag)
     ys, xs = np.nonzero(femur)
-    sel = (ys >= T) & (ys <= min(h if B is None else B, h - 1))
+    sel = (ys >= T) & (ys <= min(B, h - 1))
     L = int(xs[sel].min()) if sel.any() else int(xs.min())
-    diag.update(L=iLr, T=iTr, T5=iT5, B=iBr, rot_shape=Fr.shape)
+    _check_shaft_plausible(norm, mask, flags, diag)
+    diag.update(L=iLr, T=iTr, T5=iT5, B3=iBr, rot_shape=Fr.shape)
+    diag['B_candidates']['B3_rotated'] = Br
     return _result('kit3', side, mask.shape, T, B, L, (T, apex[1]), flags, diag)
 
 

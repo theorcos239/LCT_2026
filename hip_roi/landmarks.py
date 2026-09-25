@@ -412,8 +412,9 @@ def row_mass(img: np.ndarray, mask: np.ndarray, max_width_mm: float = 55.0):
     такой ширины у бедра ниже вертелов не бывает, значит медиальный край
     «ушёл» на таз через зону наложения.
 
-    Строки, задетые незасканированным вырезом поля, тоже недостоверны:
-    там сегмент обрезан границей поля, а не костью.
+    Строки, обрезанные краем поля сканирования, тоже недостоверны: там
+    сегмент кончается не костью, а границей поля (тон обрывается в ноль без
+    спада — в экспорте Lunar нижний медиальный угол кадра часто срезан).
 
     Возвращает (mass, valid).
     """
@@ -424,13 +425,33 @@ def row_mass(img: np.ndarray, mask: np.ndarray, max_width_mm: float = 55.0):
     mass = np.zeros(h)
     cut = np.zeros(h, bool)
     for y in range(h):
-        if w[y] > 0:
-            a, b = xl[y], min(xm[y], wd)
-            mass[y] = arr[y, a:b].sum() / 255.0
-            lo, hi = max(0, a - 2), min(wd, b + 2)
-            cut[y] = bool(notch[y, lo:hi].any())     # строку задел вырез поля
+        if w[y] <= 0:
+            continue
+        a, b = xl[y], min(xm[y], wd)
+        mass[y] = arr[y, a:b].sum() / 255.0
+        lo, hi = max(0, a - 2), min(wd, b + 2)
+        cut[y] = bool(notch[y, lo:hi].any())     # строку задел вырез поля
     valid = (w > 0) & (w <= mm2px(max_width_mm)) & ~cut
     return mass, valid
+
+
+def shaft_width_mm(img: np.ndarray, mask: np.ndarray, tail_mm: float = 25.0,
+                   max_width_mm: float = 55.0):
+    """Ширина диафиза по нижним tail_mm достоверных строк — внутренняя линейка.
+
+    У взрослого диафиз бедра в подвертельной области 25-35 мм (в выборке
+    26-41 мм, 5-95 перцентиль). Значение далеко за этими пределами означает,
+    что либо маска разошлась с костью (эндопротез с чёрным ореолом вокруг
+    металла даёт 10 мм), либо кадр обрезан выше диафиза, либо неверен масштаб.
+    Возвращает None, если достоверных строк меньше tail_mm.
+    """
+    xl, xm, w = _profiles(mask)
+    _, valid = row_mass(img, mask, max_width_mm)
+    idx = np.flatnonzero(valid)
+    n = mm2px(tail_mm)
+    if idx.size < n:
+        return None
+    return round(px2mm(float(np.median(w[idx[-n:]]))), 1)
 
 
 def B5_mass_minimum(img: np.ndarray, mask: np.ndarray, T: int, min_tb_mm: float = 35.0,
