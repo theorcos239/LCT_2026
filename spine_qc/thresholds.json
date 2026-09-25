@@ -1,0 +1,11 @@
+{
+  "axis_deg": 3.9868,
+  "axis_disagree_deg": 2.0,
+  "iliac_area": 0.001,
+  "artifact_score": 24.0136,
+  "appearance": 0.5,
+  "appearance_by_criterion": {
+    "position": 0.1796,
+    "artifacts": 0.1135
+  }
+}
