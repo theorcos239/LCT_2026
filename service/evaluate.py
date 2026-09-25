@@ -1,0 +1,191 @@
+# -*- coding: utf-8 -*-
+"""Сквозная оценка сервиса на обучающем наборе (ТЗ 8.4).
+
+    python -m service.evaluate                  # метрики + service/metrics.json
+    python -m service.evaluate --quick          # без бутстрэпа (быстро, без ДИ)
+
+Считает то, что перечислено в ТЗ: чувствительность, специфичность,
+сбалансированную точность, F1, ROC-AUC и PR-AUC — отдельно по каждой
+анатомической области и каждому типу нарушения, плюс общий бинарный класс
+«качественное / есть нарушение». Интервалы 95%: Уилсон для долей, бутстрэп по
+ИССЛЕДОВАНИЯМ для F1 и AUC (см. stats.py).
+
+**Про какие числа здесь речь.** Пороги критериев подобраны на этой же
+выборке, поэтому метрики ниже — оценка сверху. Честные out-of-fold числа, где
+порог и модель учились только на обучающих фолдах, лежат в
+`spine_qc/metrics.json` и `hip_rotation/metrics.json` и печатаются здесь же
+для сравнения. Разница между двумя таблицами — цена подгонки порога на выборке
+с 6-36 положительными примерами, и её видно.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+import stats
+import trainset
+
+HERE = Path(__file__).resolve().parent
+METRICS = HERE / 'metrics.json'
+
+# Тип нарушения -> колонка эксперта для кадра этой области.
+CRITERIA = {
+    'spine_position':  ('spine', 'y_position'),
+    'spine_axis':      ('spine', 'y_axis'),
+    'spine_artifacts': ('spine', 'y_artifacts'),
+    'hip_rotation':    ('hip', 'y_rotation'),
+    'hip_roi':         ('hip', 'y_roi'),
+}
+
+
+def run(hip_method: str = 'kit2') -> pd.DataFrame:
+    """Прогон конвейера по всем уникальным кадрам обучающего набора."""
+    from .pipeline import Analyzer
+
+    df = trainset.frames()
+    a = Analyzer.load(hip_method=hip_method)
+    rows = []
+    for r in df.itertuples():
+        px = trainset.read(r.rel_path)
+        import time
+        t0 = time.perf_counter()
+        try:
+            res = a.analyze_pixels(px)
+            status, err = 'Success', ''
+        except Exception as e:
+            res = {'anatomical_region': 'unknown', 'violations': [], 'flags': []}
+            status, err = 'Failure', f'{type(e).__name__}: {e}'
+        rows.append({
+            'study': r.study, 'rel_path': r.rel_path, 'expert_region': r.label,
+            'region': res['anatomical_region'], 'violations': res['violations'],
+            'flags': ';'.join(res['flags']), 'status': status, 'error': err,
+            'seconds': time.perf_counter() - t0,
+            **{f'y_{c}': getattr(r, f'y_{c}') for c in trainset.CRITERIA},
+        })
+    return pd.DataFrame(rows)
+
+
+def evaluate(d: pd.DataFrame, n_boot: int = 2000) -> dict:
+    """Метрики по критериям, по областям и в целом."""
+    out: dict = {'per_violation': {}, 'per_region': {}, 'overall': {}}
+
+    for vtype, (region, col) in CRITERIA.items():
+        sel = d.expert_region.isin(('lh', 'rh')) if region == 'hip' else (d.expert_region == region)
+        sub = d[sel & d[col].notna()]
+        if sub.empty:
+            continue
+        y = sub[col].values.astype(int)
+        pred = sub.violations.apply(lambda v: int(vtype in v)).values
+        m = stats.evaluate(y, pred, pred.astype(float), sub.study.values, n_boot=n_boot)
+        m['positives'] = int(y.sum())
+        out['per_violation'][vtype] = m
+
+    # бинарный класс по кадру: есть хоть одно нарушение
+    for region, name in (('spine', 'spine'), ('hip', 'hip')):
+        sel = d.expert_region.isin(('lh', 'rh')) if region == 'hip' else (d.expert_region == region)
+        cols = [c for v, (r, c) in CRITERIA.items() if r == region]
+        sub = d[sel]
+        known = sub[cols].notna().all(axis=1)
+        sub = sub[known]
+        if sub.empty:
+            continue
+        y = (sub[cols].sum(axis=1) > 0).astype(int).values
+        pred = sub.violations.apply(lambda v: int(bool(v))).values
+        m = stats.evaluate(y, pred, pred.astype(float), sub.study.values, n_boot=n_boot)
+        m['positives'] = int(y.sum())
+        m['images'] = int(len(sub))
+        out['per_region'][name] = m
+
+    all_cols = [c for _, c in CRITERIA.values()]
+    known = d[all_cols].notna().any(axis=1)
+    sub = d[known]
+    y = (sub[all_cols].fillna(0).sum(axis=1) > 0).astype(int).values
+    pred = sub.violations.apply(lambda v: int(bool(v))).values
+    m = stats.evaluate(y, pred, pred.astype(float), sub.study.values, n_boot=n_boot)
+    m['positives'] = int(y.sum())
+    m['images'] = int(len(sub))
+    out['overall']['binary_quality_class'] = m
+
+    f1s = [v['f1'] for v in out['per_violation'].values()]
+    out['overall']['macro_f1'] = float(np.mean(f1s)) if f1s else float('nan')
+    out['overall']['region_accuracy'] = float((d.region == d.expert_region).mean())
+    out['overall']['processed'] = int((d.status == 'Success').sum())
+    out['overall']['failed'] = int((d.status == 'Failure').sum())
+    out['overall']['seconds_per_image_median'] = float(d.seconds.median())
+    out['overall']['seconds_per_image_p95'] = float(d.seconds.quantile(0.95))
+    return out
+
+
+def _oof_reference() -> dict:
+    """Честные OOF-метрики, сохранённые калибраторами критериев."""
+    ref = {}
+    p = Path(__file__).resolve().parent.parent
+    sp = p / 'spine_qc' / 'metrics.json'
+    if sp.exists():
+        for k, v in json.loads(sp.read_text(encoding='utf-8')).items():
+            ref[f'spine_{k}'] = v
+    hr = p / 'hip_rotation' / 'metrics.json'
+    if hr.exists():
+        ref['hip_rotation'] = json.loads(hr.read_text(encoding='utf-8'))
+    hroi = p / 'hip_roi' / 'eval' / 'metrics.json'
+    if hroi.exists():
+        m = json.loads(hroi.read_text(encoding='utf-8')).get('methods', {}).get('kit2')
+        if m:
+            ref['hip_roi'] = m
+    return ref
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description='Сквозная оценка сервиса на обучающем наборе')
+    ap.add_argument('--quick', action='store_true', help='без бутстрэпа')
+    ap.add_argument('--hip-method', default='kit2')
+    ap.add_argument('--no-save', action='store_true')
+    args = ap.parse_args()
+
+    d = run(args.hip_method)
+    print(f'{len(d)} кадров, {d.study.nunique()} исследований, '
+          f'ошибок {(d.status == "Failure").sum()}')
+    res = evaluate(d, n_boot=0 if args.quick else 2000)
+
+    print('\nпо типам нарушений (пороги подобраны на этой же выборке):')
+    for k, m in res['per_violation'].items():
+        print(f'  {k:16} {stats.fmt(m)}')
+    print('\nбинарный класс «есть нарушение»:')
+    for k, m in res['per_region'].items():
+        print(f'  {k:16} {stats.fmt(m)}')
+    print(f"  {'всего':16} {stats.fmt(res['overall']['binary_quality_class'])}")
+    o = res['overall']
+    print(f"\nmacro-F1 по типам нарушений: {o['macro_f1']:.3f}")
+    print(f"точность определения области: {o['region_accuracy']:.3f}")
+    print(f"время на кадр: медиана {o['seconds_per_image_median']*1000:.0f} мс, "
+          f"p95 {o['seconds_per_image_p95']*1000:.0f} мс")
+
+    ref = _oof_reference()
+    if ref:
+        print('\nдля сравнения — честные OOF (порог и модель учились только на обучающих фолдах):')
+        for k in ('spine_position', 'spine_axis', 'spine_artifacts', 'hip_rotation', 'hip_roi'):
+            m = ref.get(k)
+            if not m:
+                continue
+            se, sp = m.get('sensitivity'), m.get('specificity')
+            f1 = m.get('f1')
+            f1s = f'{f1:.2f}' if isinstance(f1, (int, float)) else '—'
+            print(f'  {k:16} sens={se:.2f} spec={sp:.2f} F1={f1s}')
+
+    if not args.no_save:
+        res['oof_reference'] = ref
+        METRICS.write_text(json.dumps(res, ensure_ascii=False, indent=2, default=float),
+                           encoding='utf-8')
+        d.drop(columns=['violations']).assign(
+            violations=d.violations.apply(';'.join)).to_csv(
+            HERE / 'evaluation.csv', index=False, encoding='utf-8')
+        print(f'\nсохранено: {METRICS.name}, evaluation.csv')
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

@@ -1,0 +1,150 @@
+# -*- coding: utf-8 -*-
+"""Чтение DICOM, обход исследований и дедупликация кадров.
+
+Три вещи, без которых пакетная обработка этих данных даёт неверный результат:
+
+1. **Дедупликация по пикселям.** Lunar выгружает один и тот же снимок по
+   несколько раз (переанализ, печать отчёта). В 499 файлах обучающего набора
+   всего 252 уникальных кадра. У копий РАЗНЫЕ SOPInstanceUID и InstanceNumber,
+   поэтому ловятся они только по хешу пикселей. Без дедупликации одно
+   исследование даёт до 29 строк отчёта вместо трёх.
+2. **Ключ исследования — папка, а не StudyInstanceUID.** В обучающем наборе
+   тег анонимизирован и с именем папки не совпадает. В отчёт пишется тег (так
+   требует ТЗ), но группировка и разбиение выборки идут по папке.
+3. **Ни одно исключение не должно ронять пачку.** Битый файл становится
+   строкой отчёта со статусом Failure — так требует ТЗ 2.7.
+"""
+from __future__ import annotations
+
+import hashlib
+import logging
+import warnings
+import zipfile
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import numpy as np
+
+SUFFIXES = {'.dcm', '.dicom', ''}
+_SILENCED = False
+
+
+def _silence() -> None:
+    """pydicom шумит на невалидных UID (1.2.643…) и длинных LO-полях."""
+    global _SILENCED
+    if not _SILENCED:
+        warnings.filterwarnings('ignore')
+        logging.getLogger('pydicom').setLevel(logging.ERROR)
+        _SILENCED = True
+
+
+@dataclass
+class Frame:
+    """Один уникальный кадр исследования."""
+    path: Path
+    study_key: str                  # имя папки исследования — ключ группировки
+    study_uid: str                  # StudyInstanceUID из тегов (в отчёт)
+    image_uid: str                  # SOPInstanceUID из тегов (в отчёт)
+    pixels: np.ndarray
+    px_hash: str
+    duplicates: list[Path] = field(default_factory=list)
+    meta: dict = field(default_factory=dict)
+
+
+def read_frame(path: str | Path, study_key: str | None = None) -> Frame:
+    """DICOM -> Frame. Яркость приведена к «кость светлая»."""
+    import pydicom
+    from pydicom.pixels import apply_voi_lut
+
+    _silence()
+    p = Path(path)
+    ds = pydicom.dcmread(str(p))
+    px = ds.pixel_array
+    try:
+        px = apply_voi_lut(px, ds)
+    except Exception:
+        pass                                # LUT необязателен, кадр читается и без него
+    px = px.astype(np.float32)
+    if str(ds.get('PhotometricInterpretation', 'MONOCHROME2')) == 'MONOCHROME1':
+        px = px.max() - px
+    if px.ndim != 2:
+        raise ValueError(f'ожидался одноканальный кадр, получено {px.shape}')
+
+    return Frame(
+        path=p,
+        study_key=study_key or p.parent.name,
+        study_uid=str(ds.get('StudyInstanceUID', '') or ''),
+        image_uid=str(ds.get('SOPInstanceUID', '') or ''),
+        pixels=px,
+        px_hash=hashlib.md5(np.ascontiguousarray(px).tobytes()).hexdigest(),
+        meta={'rows': int(px.shape[0]), 'cols': int(px.shape[1]),
+              'instance': ds.get('InstanceNumber', None),
+              'manufacturer': str(ds.get('Manufacturer', '') or ''),
+              'modality': str(ds.get('Modality', '') or '')},
+    )
+
+
+def dicom_files(root: str | Path) -> list[Path]:
+    """Все файлы, похожие на DICOM, рекурсивно и в детерминированном порядке."""
+    p = Path(root)
+    if p.is_file():
+        return [p]
+    return [f for f in sorted(p.rglob('*'))
+            if f.is_file() and f.suffix.lower() in SUFFIXES]
+
+
+def study_dirs(root: str | Path) -> list[Path]:
+    """Папки исследований.
+
+    Исследование — это папка, внутри которой (на любой глубине) лежат DICOM.
+    Если `root` сам содержит файлы, он и есть единственное исследование:
+    так работает и «архив из 100 папок», и «одно исследование», и «один файл».
+    """
+    p = Path(root)
+    if p.is_file():
+        return [p.parent]
+    if any(f.is_file() and f.suffix.lower() in SUFFIXES for f in p.iterdir() if f.is_file()):
+        return [p]
+    subs = [d for d in sorted(p.iterdir()) if d.is_dir() and dicom_files(d)]
+    return subs or ([p] if dicom_files(p) else [])
+
+
+def unique_frames(study: str | Path, study_key: str | None = None
+                  ) -> tuple[list[Frame], list[tuple[Path, Exception]]]:
+    """Уникальные кадры исследования и список непрочитанных файлов.
+
+    Дедупликация идёт ВНУТРИ исследования: одинаковых кадров в разных
+    исследованиях в обучающем наборе нет, а схлопывать их между пациентами
+    было бы неверно в принципе.
+    """
+    key = study_key or Path(study).name
+    seen: dict[str, Frame] = {}
+    failed: list[tuple[Path, Exception]] = []
+    for f in dicom_files(study):
+        try:
+            fr = read_frame(f, key)
+        except Exception as e:                       # битый файл не роняет пачку
+            failed.append((f, e))
+            continue
+        if fr.px_hash in seen:
+            seen[fr.px_hash].duplicates.append(f)
+        else:
+            seen[fr.px_hash] = fr
+    return list(seen.values()), failed
+
+
+def extract_archive(archive: str | Path, dest: str | Path) -> Path:
+    """Распаковка zip с исследованиями. Пути внутри архива проверяются.
+
+    Защита от path traversal обязательна: архив приходит извне, а `extractall`
+    сам по себе позволяет файлу с именем `../../x` уехать за пределы каталога.
+    """
+    dest = Path(dest)
+    dest.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(archive) as z:
+        for member in z.namelist():
+            target = (dest / member).resolve()
+            if not str(target).startswith(str(dest.resolve())):
+                raise ValueError(f'недопустимый путь в архиве: {member}')
+        z.extractall(dest)
+    return dest
