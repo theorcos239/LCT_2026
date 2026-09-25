@@ -21,7 +21,7 @@ ROI — Region of Interest, область интереса: стандартн�
 > 5–15 мм, поэтому `m_bottom_mm` в этой версии модуля систематически неверен.
 > Проверено настоящей ручной разметкой 150 кадров бедра — подробности и
 > 9 показательных снимков в [`contradictions/expert_vs_tz.zip`](contradictions/expert_vs_tz.zip)
-> и [`contradictions/ПОЯСНЕНИЕ.md`](contradictions/ПОЯСНЕНИЕ.md). Верх и
+> и [`contradictions/ПОЯСНЕНИЕ.txt`](contradictions/ПОЯСНЕНИЕ.txt). Верх и
 > латераль этой находкой не затронуты — они и раньше отсчитывались от верных точек.
 
 ## Место в конвейере
@@ -288,4 +288,4 @@ kit3: водораздел — собственная минимаксная з�
 | [test_hip_roi.py](test_hip_roi.py) | тесты |
 | [report_contradictions.py](report_contradictions.py) | архив «эксперт против ТЗ»: размеченные снимки + пояснение |
 | `eval/` | результаты последнего прогона |
-| `contradictions/` | [expert_vs_tz.zip](contradictions/expert_vs_tz.zip) и [ПОЯСНЕНИЕ.md](contradictions/ПОЯСНЕНИЕ.md) — 9 кадров, где оценка эксперта противоречит критерию ТЗ, с вопросами эксперту |
+| `contradictions/` | [expert_vs_tz.zip](contradictions/expert_vs_tz.zip) и [ПОЯСНЕНИЕ.txt](contradictions/ПОЯСНЕНИЕ.txt) — 9 кадров, где оценка эксперта противоречит критерию ТЗ, с вопросами эксперту |

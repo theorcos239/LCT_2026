@@ -10,13 +10,13 @@
     идентификатор исследования, что и подписанная версия);
   - cases.csv — сводка по этим 9 случаям;
   - all_real_disagreements.csv — все настоящие расхождения (не только показанные);
-  - ПОЯСНЕНИЕ.md — текст рядом с архивом.
+  - ПОЯСНЕНИЕ.txt — текст рядом с архивом (только .txt, без markdown).
 
 В отличие от первой версии этого отчёта (см. git-историю), здесь используются
 НЕ оценки алгоритма `hip_roi.kits`, а настоящая ручная разметка ключевых точек
 (`hip_roi.ground_truth`, источник — `data/razmetka_aleksandra_*.json`) и
 официальный протокол разметки, который называет `ischium_bottom` (а не малый
-вертел) точкой отсчёта нижнего поля ТЗ. Подробности — в ПОЯСНЕНИЕ.md.
+вертел) точкой отсчёта нижнего поля ТЗ. Подробности — в ПОЯСНЕНИЕ.txt.
 """
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ from .ground_truth import (ANNOTATIONS_JSON, OUT, decode_png, load_html_images,
 from .overlay import _font
 
 ZIP_NAME = 'expert_vs_tz.zip'
-NOTE_NAME = 'ПОЯСНЕНИЕ.md'
+NOTE_NAME = 'ПОЯСНЕНИЕ.txt'
 S = 3
 
 RED = (255, 70, 70)
