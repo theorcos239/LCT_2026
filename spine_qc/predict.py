@@ -25,7 +25,10 @@ from region_clf.features import read_image
 
 from . import criteria
 from .appearance import AppearanceModel
-from .calibrate import THRESHOLDS
+
+# Путь задан здесь, а не импортирован из calibrate: рантайму не нужен модуль
+# калибровки, а он тянет за собой trainset и весь обучающий набор путей.
+THRESHOLDS = Path(__file__).resolve().parent / 'thresholds.json'
 
 CRITERIA_RU = {'position': 'укладка', 'axis': 'ось', 'artifacts': 'артефакты'}
 
@@ -87,6 +90,8 @@ def main() -> int:
     ap.add_argument('--csv', type=Path, help='сохранить таблицу')
     ap.add_argument('--json', action='store_true')
     ap.add_argument('--overlay', type=Path, help='визуализация (только для одного кадра)')
+    ap.add_argument('--no-region-check', action='store_true',
+                    help='не проверять, что кадр действительно позвоночник')
     args = ap.parse_args()
 
     from region_clf.predict import collect
@@ -99,12 +104,37 @@ def main() -> int:
     if not qc.appearance.available:
         print('модель вида кадра не найдена, работаю на одной геометрии', file=sys.stderr)
 
-    rows, failed = [], []
+    # Критерии позвоночника применимы только к кадру позвоночника: на снимке
+    # бедра они посчитаются и дадут бессмысленный ответ («ось -19.8°»). В
+    # сервисе маршрутизацию делает region_clf, здесь папку скармливают руками,
+    # поэтому проверка нужна и тут.
+    region = None
+    if not args.no_region_check:
+        try:
+            from region_clf import RegionClassifier
+            region = RegionClassifier()
+        except Exception as e:
+            print(f'классификатор области недоступен ({e}), проверка пропущена', file=sys.stderr)
+
+    rows, failed, skipped = [], [], []
     for f in files:
         try:
+            if region is not None:
+                r = region.classify(f)
+                if r['label'] != 'spine' or not r['accepted']:
+                    skipped.append((f, r['label'] if r['accepted'] else 'не принят'))
+                    continue
             rows.append(_row(f, qc.analyze(f)))
         except Exception as e:
             failed.append((f, e))
+
+    if skipped:
+        print(f'пропущено кадров не позвоночника: {len(skipped)} '
+              f'({", ".join(f"{Path(p).name}={lab}" for p, lab in skipped[:4])}'
+              f'{", ..." if len(skipped) > 4 else ""})', file=sys.stderr)
+    if not rows:
+        print('не осталось кадров позвоночника для оценки', file=sys.stderr)
+        return 1
 
     if args.json:
         print(json.dumps(rows, ensure_ascii=False, indent=2, default=float))
