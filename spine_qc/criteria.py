@@ -30,6 +30,7 @@ from __future__ import annotations
 import numpy as np
 from scipy import ndimage as ndi
 
+from . import probability
 from .geometry import (AXIS_LIMIT_DEG, SpineColumn, mm2px, px2mm, spine_column,
                        theil_sen, white_tophat)
 
@@ -293,8 +294,17 @@ def analyze(img: np.ndarray, appearance: dict | None = None, thr: dict | None = 
         'position': position(col, app.get('position'), thr),
         'artifacts': artifacts(col, app.get('artifacts'), thr),
     }
+    # Калиброванная вероятность рядом с вердиктом: вердикт нужен оператору,
+    # вероятность — отчёту, по ней организатор считает ROC-AUC.
+    params = (thr or {}).get('probability', {})
+    for name, crit in res.items():
+        crit['probability'] = probability.apply(params.get(name),
+                                                probability.score_of(name, crit))
+
     violations = [v['text'] for v in res.values() if v['violated'] and v['text']]
     flags = list(col.flags) + [f for v in res.values() for f in v['flags']]
     return {'criteria': res, 'violations': violations, 'flags': flags,
             'quality_class': int(any(v['violated'] for v in res.values())),
+            'quality_probability': probability.combine(
+                v['probability'] for v in res.values()),
             'column': col}

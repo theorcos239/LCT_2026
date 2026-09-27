@@ -7,5 +7,19 @@
   "appearance_by_criterion": {
     "position": 0.1796,
     "artifacts": 0.1135
+  },
+  "probability": {
+    "axis": {
+      "w": 0.440986,
+      "b": -3.621595
+    },
+    "position": {
+      "w": 0.468067,
+      "b": -2.69425
+    },
+    "artifacts": {
+      "w": 0.038851,
+      "b": -2.437071
+    }
   }
 }

@@ -26,6 +26,7 @@ import stats
 import trainset
 
 from . import appearance as app
+from . import probability as prob
 from .criteria import DEFAULTS, artifact_structures, axis, iliac_masses
 from .geometry import spine_column
 
@@ -120,6 +121,7 @@ def out_of_fold(d: pd.DataFrame, X: np.ndarray) -> tuple[dict, dict, dict]:
     folds = sorted(d.fold.unique())
     oof_pred = {k: np.zeros(len(d), int) for k in RULES}
     oof_app = {k: np.full(len(d), np.nan) for k in app.TARGETS}
+    oof_prob = {k: np.full(len(d), np.nan) for k in RULES}
     per_rule = {k: {} for k in RULES}
 
     for f in folds:
@@ -141,6 +143,9 @@ def out_of_fold(d: pd.DataFrame, X: np.ndarray) -> tuple[dict, dict, dict]:
             y = d[f'y_{name}'].values.astype(float)
             g = geometry_score(name, d)
             geo_bad[name] = g[te] > best_threshold(y[tr], g[tr])
+            pl = prob.fit(y[tr], g[tr])                  # калибровка только по train
+            if pl is not None:
+                oof_prob[name][te] = [prob.apply(pl, v) for v in g[te]]
             variants = {'geometry': geo_bad[name].astype(int)}
             if name in app_bad:
                 variants['appearance'] = app_bad[name].astype(int)
@@ -149,10 +154,11 @@ def out_of_fold(d: pd.DataFrame, X: np.ndarray) -> tuple[dict, dict, dict]:
             for rn, pred in variants.items():
                 per_rule[name].setdefault(rn, np.zeros(len(d), int))[te] = pred
             oof_pred[name][te] = variants[cfg['rule']]
-    return oof_pred, oof_app, per_rule
+    return oof_pred, oof_app, per_rule, oof_prob
 
 
-def report(d: pd.DataFrame, oof_pred: dict, oof_app: dict) -> dict:
+def report(d: pd.DataFrame, oof_pred: dict, oof_app: dict,
+           oof_prob: dict | None = None) -> dict:
     """Метрики с 95% ДИ, бутстрэп по исследованиям."""
     out = {}
     for name in RULES:
@@ -165,6 +171,11 @@ def report(d: pd.DataFrame, oof_pred: dict, oof_app: dict) -> dict:
             m['appearance_auc'] = stats.roc_auc(y[ok].astype(int), oof_app[name][ok])
             m['rank_corr'] = float(pd.Series(g[ok]).corr(
                 pd.Series(oof_app[name][ok]), method='spearman'))
+        if oof_prob is not None and np.isfinite(oof_prob[name][ok]).any():
+            pr = oof_prob[name][ok]
+            m['brier'] = round(prob.brier(y[ok], pr), 4)
+            m['prob_mean'] = round(float(np.nanmean(pr)), 4)
+            m['base_rate'] = round(float(np.nanmean(y[ok])), 4)
         m['rule'] = RULES[name]['rule']
         m['positives'] = int(np.nansum(y))
         out[name] = m
@@ -181,13 +192,15 @@ def main() -> int:
     print(f'{len(df)} кадров позвоночника, {df.study.nunique()} исследований')
     d, X = measure(df)
 
-    oof_pred, oof_app, per_rule = out_of_fold(d, X)
-    metrics = report(d, oof_pred, oof_app)
+    oof_pred, oof_app, per_rule, oof_prob = out_of_fold(d, X)
+    metrics = report(d, oof_pred, oof_app, oof_prob)
 
     print('\nOOF (порог и модель вида учились только на обучающих фолдах):')
     for name, m in metrics.items():
         print(f'  {name:10} {stats.fmt(m)}')
         extra = f"  AUC геометрии {m['geometry_auc']:.3f}"
+        if 'brier' in m:
+            extra += f", Brier {m['brier']:.3f} (доля нарушений {m['base_rate']:.2f})"
         if 'appearance_auc' in m:
             extra += f", вида кадра {m['appearance_auc']:.3f}, корр. рангов {m['rank_corr']:.2f}"
         print(f"  {'':10} правило «{m['rule']}»,{extra}")
@@ -225,6 +238,12 @@ def main() -> int:
         if np.isfinite(p).all():
             app_thr[name] = round(float(best_threshold(y, p)), 4)
     thr['appearance_by_criterion'] = app_thr
+    thr['probability'] = {}
+    for name in RULES:
+        y = d[f'y_{name}'].values.astype(float)
+        pl = prob.fit(y, geometry_score(name, d))
+        if pl is not None:
+            thr['probability'][name] = pl
     print('\nпороги для поставки:', json.dumps(thr, ensure_ascii=False))
 
     if not args.no_save:

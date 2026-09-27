@@ -17,7 +17,8 @@ import pandas as pd
 
 from .pipeline import COLUMNS
 
-EXTRA = ['violation_description', 'region_confidence', 'region_accepted',
+EXTRA = ['violation_description', 'quality_probability', 'p_spine_position',
+         'p_spine_axis', 'p_spine_artifacts', 'region_confidence', 'region_accepted',
          'file_name', 'duplicates', 'flags', 'error']
 
 
@@ -61,7 +62,13 @@ def write_details(rows: list[dict], path: str | Path) -> Path:
     payload = [{'path_to_study': r.get('path_to_study'), 'image_uid': r.get('image_uid'),
                 'file_name': r.get('file_name'),
                 'anatomical_region': r.get('anatomical_region'),
+                'quality_class': r.get('quality_class'),
+                'quality_probability': r.get('quality_probability'),
                 'violation_type': r.get('violation_type'),
+                'violation_description': r.get('violation_description'),
+                'processing_status': r.get('processing_status'),
+                'time_of_processing': r.get('time_of_processing'),
+                'flags': r.get('flags'),
                 'details': r.get('details', {})} for r in rows]
     p.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding='utf-8')
     return p
@@ -89,11 +96,14 @@ def summary(rows: list[dict]) -> dict:
     }
 
 
-def write_overlays(rows: list[dict], frames_by_uid: dict, path: str | Path) -> Path:
+def write_overlays(rows: list[dict], frames_by_uid: dict, path: str | Path,
+                   only_violations: bool = True) -> Path:
     """Zip с визуализацией нарушений (ТЗ 2.6 и 2.7).
 
-    Кладём только кадры с нарушением: архив со всеми кадрами подряд оператор
-    не откроет, а разбирать он будет именно эти.
+    По умолчанию кладём только кадры с нарушением: архив со всеми кадрами
+    подряд оператор не откроет, а разбирать он будет именно эти. Веб-интерфейс
+    просит все (`only_violations=False`), чтобы показывать и качественные кадры
+    с разметкой — «вот почему снимок принят».
     """
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -102,7 +112,9 @@ def write_overlays(rows: list[dict], frames_by_uid: dict, path: str | Path) -> P
     from .overlay import render
     with zipfile.ZipFile(p, 'w', zipfile.ZIP_DEFLATED) as z:
         for r in rows:
-            if not r.get('quality_class') or r.get('processing_status') != 'Success':
+            if r.get('processing_status') != 'Success':
+                continue
+            if only_violations and not r.get('quality_class'):
                 continue
             frame = frames_by_uid.get(r.get('image_uid'))
             if frame is None:
@@ -113,7 +125,11 @@ def write_overlays(rows: list[dict], frames_by_uid: dict, path: str | Path) -> P
                 continue                     # визуализация не критична для отчёта
             buf = io.BytesIO()
             img.save(buf, format='PNG')
-            name = f"{r.get('path_to_study', 'study')}/{r.get('file_name', r.get('image_uid'))}.png"
+            # Имя записи содержит уникальный хвост image_uid: внутри исследования файлы
+            # называются одинаково (CR000000.dcm), и без него записи перетирались бы.
+            uid = str(r.get('image_uid') or '')
+            stem = Path(str(r.get('file_name') or uid or 'frame')).stem
+            name = f"{r.get('path_to_study', 'study')}/{stem}__{uid[-12:]}.png"
             z.writestr(name.replace('\\', '/'), buf.getvalue())
     return p
 

@@ -1,0 +1,253 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Контроль качества денситометрии</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --bg: #12151a; --panel: #1a1e26; --line: #2a303b; --text: #e6e9ef;
+    --dim: #8b93a3; --ok: #3fb950; --bad: #f85149; --accent: #4493f8;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { padding: 14px 20px; border-bottom: 1px solid var(--line);
+           display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+  h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  .dim { color: var(--dim); }
+  main { display: grid; grid-template-columns: minmax(420px, 1fr) minmax(320px, 420px);
+         gap: 16px; padding: 16px 20px; align-items: start; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+  .pad { padding: 14px 16px; }
+
+  #drop { border: 2px dashed var(--line); border-radius: 8px; padding: 28px 16px;
+          text-align: center; cursor: pointer; transition: .15s; }
+  #drop.over { border-color: var(--accent); background: #4493f814; }
+  #drop input { display: none; }
+
+  button { background: #222834; color: var(--text); border: 1px solid var(--line);
+           border-radius: 6px; padding: 6px 12px; font: inherit; cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  a.btn { text-decoration: none; display: inline-block; }
+
+  progress { width: 100%; height: 6px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line);
+           white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  th { color: var(--dim); font-weight: 500; position: sticky; top: 0; background: var(--panel); }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: #ffffff0a; }
+  tbody tr.sel { background: #4493f822; }
+  .wrap { max-height: 60vh; overflow: auto; }
+
+  .tag { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 12px; }
+  .tag.ok { background: #3fb95022; color: var(--ok); }
+  .tag.bad { background: #f8514922; color: var(--bad); }
+  .tag.err { background: #8b93a322; color: var(--dim); }
+
+  #shot { width: 100%; border-radius: 6px; background: #000; display: block; }
+  dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 10px 0 0; }
+  dt { color: var(--dim); } dd { margin: 0; }
+  .flags { color: var(--dim); font-size: 12px; margin-top: 10px; word-break: break-all; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  select { background: #222834; color: var(--text); border: 1px solid var(--line);
+           border-radius: 6px; padding: 5px 8px; font: inherit; }
+</style>
+
+<header>
+  <h1>Контроль качества денситометрии</h1>
+  <span class="dim" id="health">проверяю сервис…</span>
+</header>
+
+<main>
+  <section class="panel pad">
+    <div id="drop">
+      <b>Перетащите zip с исследованиями</b><br>
+      <span class="dim">или нажмите, чтобы выбрать файл. Можно один .dcm</span>
+      <input id="file" type="file" accept=".zip,.dcm,application/zip">
+    </div>
+
+    <div id="run" hidden style="margin-top:14px">
+      <div class="row"><b id="state">Обработка</b><span class="dim" id="progress"></span></div>
+      <progress id="bar" max="1" value="0"></progress>
+      <div class="dim" id="summary" style="margin-top:6px"></div>
+    </div>
+
+    <div id="tools" hidden style="margin-top:14px" class="row">
+      <select id="filter">
+        <option value="">все кадры</option>
+        <option value="bad">только с нарушением</option>
+        <option value="ok">только качественные</option>
+        <option value="spine">позвоночник</option>
+        <option value="hip">бедро</option>
+        <option value="fail">ошибки обработки</option>
+      </select>
+      <a class="btn" id="dl-report"><button>Таблица</button></a>
+      <a class="btn" id="dl-details"><button>details.json</button></a>
+      <a class="btn" id="dl-overlays"><button>Оверлеи zip</button></a>
+    </div>
+
+    <div class="wrap" id="tablewrap" hidden style="margin-top:12px">
+      <table>
+        <thead><tr><th>Файл</th><th>Область</th><th>Класс</th><th>Нарушения</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel pad" id="side">
+    <div class="dim" id="hint">Выберите кадр в таблице — здесь появится визуализация и измерения.</div>
+    <img id="shot" hidden alt="визуализация кадра">
+    <dl id="facts"></dl>
+    <div class="flags" id="flags"></div>
+  </section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const REGION = { spine: 'позвоночник', lh: 'левое бедро', rh: 'правое бедро', unknown: 'не определена' };
+let job = null, rows = [], selected = null;
+
+fetch('/health').then(r => r.json()).then(h => {
+  const models = Object.entries(h.models || {}).filter(([, v]) => v).map(([k]) => k);
+  $('#health').textContent = `сервис ${h.status || 'ok'} · модели: ${models.join(', ') || 'нет'}`;
+}).catch(() => $('#health').textContent = 'сервис недоступен');
+
+// --- загрузка файла -------------------------------------------------------
+const drop = $('#drop');
+drop.onclick = () => $('#file').click();
+drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
+drop.ondragleave = () => drop.classList.remove('over');
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); send(e.dataTransfer.files[0]); };
+$('#file').onchange = e => send(e.target.files[0]);
+
+async function send(file) {
+  if (!file) return;
+  reset();
+  const body = new FormData();
+  body.append('file', file);
+  if (file.name.toLowerCase().endsWith('.dcm')) return single(body, file.name);
+
+  $('#run').hidden = false;
+  $('#state').textContent = 'Загрузка архива';
+  const r = await fetch('/batch?overlays=true&all_frames=true', { method: 'POST', body });
+  if (!r.ok) return fail(await r.text());
+  job = (await r.json()).id;
+  poll();
+}
+
+// Один DICOM: вердикт и картинка сразу, без задания.
+async function single(body, name) {
+  const r = await fetch('/analyze', { method: 'POST', body });
+  if (!r.ok) return fail(await r.text());
+  const res = await r.json();
+  rows = [{ file_name: name, ...res }];
+  render();
+  const img = await fetch('/analyze/overlay', { method: 'POST', body: cloneForm(body) });
+  show(rows[0], img.ok ? URL.createObjectURL(await img.blob()) : null);
+}
+function cloneForm(body) { const f = new FormData(); for (const [k, v] of body) f.append(k, v); return f; }
+
+// --- прогресс задания -----------------------------------------------------
+async function poll() {
+  const r = await fetch(`/jobs/${job}`);
+  const j = await r.json();
+  const [done, total] = (j.progress || '0/0').split('/').map(Number);
+  $('#bar').max = Math.max(total, 1); $('#bar').value = done;
+  $('#progress').textContent = `${done} / ${total || '?'}`;
+  $('#state').textContent = { queued: 'В очереди', running: 'Обработка',
+                              done: 'Готово', failed: 'Ошибка' }[j.state] || j.state;
+  if (j.state === 'failed') return fail(j.error);
+  if (j.state !== 'done') return setTimeout(poll, 500);
+
+  const s = j.summary || {};
+  $('#summary').textContent = `исследований ${s.studies ?? '—'}, кадров ${s.images ?? '—'}, `
+    + `с нарушением ${s.with_violation ?? 0}, ошибок ${s.failure ?? 0}, `
+    + `${s.seconds_per_image_median ?? '—'} с на кадр`;
+  for (const [id, path] of [['#dl-report', 'report'], ['#dl-details', 'details'],
+                            ['#dl-overlays', 'overlays']])
+    $(id).href = `/jobs/${job}/${path}`;
+  rows = await (await fetch(`/jobs/${job}/details`)).json();
+  render();
+}
+
+// --- таблица --------------------------------------------------------------
+$('#filter').onchange = render;
+
+function keep(r) {
+  const f = $('#filter').value, reg = r.anatomical_region;
+  if (f === 'bad') return r.quality_class === 1 && r.processing_status !== 'Failure';
+  if (f === 'ok') return r.quality_class === 0;
+  if (f === 'spine') return reg === 'spine';
+  if (f === 'hip') return reg === 'lh' || reg === 'rh';
+  if (f === 'fail') return r.processing_status === 'Failure';
+  return true;
+}
+
+function render() {
+  const tbody = $('#rows');
+  tbody.textContent = '';
+  const shown = rows.filter(keep);
+  for (const r of shown) {
+    const tr = document.createElement('tr');
+    const bad = r.processing_status === 'Failure' ? 'err' : r.quality_class ? 'bad' : 'ok';
+    const label = bad === 'err' ? 'сбой' : bad === 'bad' ? 'нарушение' : 'качественный';
+    tr.innerHTML = `<td>${esc(r.file_name || r.image_uid || '')}</td>`
+      + `<td>${REGION[r.anatomical_region] || r.anatomical_region || ''}</td>`
+      + `<td><span class="tag ${bad}">${label}</span></td>`
+      + `<td>${esc(r.violation_description || r.violation_type || '')}</td>`;
+    tr.onclick = () => show(r);
+    tbody.append(tr);
+  }
+  $('#tools').hidden = !rows.length;
+  $('#tablewrap').hidden = !rows.length;
+  if (!shown.length && rows.length) tbody.innerHTML = '<tr><td colspan="4" class="dim">ничего не подходит под фильтр</td></tr>';
+}
+
+// --- карточка кадра -------------------------------------------------------
+function show(r, imgUrl) {
+  selected = r;
+  for (const tr of $('#rows').children) tr.classList.remove('sel');
+  const idx = rows.filter(keep).indexOf(r);
+  if (idx >= 0 && $('#rows').children[idx]) $('#rows').children[idx].classList.add('sel');
+
+  $('#hint').hidden = true;
+  const img = $('#shot');
+  const src = imgUrl || (job && r.image_uid ? `/jobs/${job}/overlays/${r.image_uid}.png` : null);
+  img.hidden = !src;
+  if (src) { img.src = src; img.onerror = () => { img.hidden = true; }; }
+  $('#facts').innerHTML = facts(r).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('');
+  $('#flags').textContent = r.flags ? `флаги: ${r.flags}` : '';
+}
+
+// Измерения важнее вердикта: оператор проверяет числа, а не ярлык.
+function facts(r) {
+  const d = r.details || {}, out = [];
+  const num = (v, u, n = 1) => v === null || v === undefined ? null : `${(+v).toFixed(n)} ${u}`;
+  if (r.quality_probability != null) out.push(['вероятность нарушения', (+r.quality_probability).toFixed(2)]);
+  const ax = (d.spine || {}).axis || {};
+  if (ax.angle_deg != null) out.push(['угол оси', `${num(ax.angle_deg, '°')} (норма до 5°)`]);
+  if (ax.curvature_mm != null) out.push(['кривизна', num(ax.curvature_mm, 'мм')]);
+  const pos = (d.spine || {}).position || {};
+  if (pos.iliac_area != null) out.push(['гребни подвздошных костей', pos.violated ? 'не визуализированы' : 'видны']);
+  const art = (d.spine || {}).artifacts || {};
+  if (art.length_mm != null) out.push(['инородные тела', num(art.length_mm, 'мм')]);
+  const roi = d.hip_roi || {};
+  for (const [k, ru, norm] of [['m_top_mm', 'отступ сверху', 30], ['m_bottom_mm', 'отступ снизу', 30],
+                               ['m_lat_mm', 'отступ сбоку', 20]])
+    if (roi[k] != null) out.push([ru, `${num(roi[k], 'мм')} (норма от ${norm})`]);
+  const rot = d.hip_rotation || {};
+  if (rot.area_mm2 != null) out.push(['выступ малого вертела', num(rot.area_mm2, 'мм²', 0)]);
+  if (r.time_of_processing != null) out.push(['время обработки', num(r.time_of_processing, 'с', 2)]);
+  if (r.processing_status === 'Failure') out.push(['ошибка', r.error || 'не обработано']);
+  return out.filter(([, v]) => v !== null && v !== undefined);
+}
+
+// --- прочее ---------------------------------------------------------------
+function reset() { job = null; rows = []; selected = null; render(); $('#hint').hidden = false;
+                   $('#shot').hidden = true; $('#facts').textContent = ''; $('#flags').textContent = ''; }
+function fail(msg) { $('#state').textContent = 'Ошибка'; $('#summary').textContent = String(msg).slice(0, 300); }
+function esc(v) { return String(v ?? '').replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c])); }
+</script>

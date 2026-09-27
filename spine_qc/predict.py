@@ -74,7 +74,11 @@ def _row(path, res) -> dict:
     return {
         'path': str(path),
         'quality_class': res['quality_class'],
+        'quality_probability': res.get('quality_probability'),
         'violations': '; '.join(res['violations']),
+        'p_axis': c['axis'].get('probability'),
+        'p_position': c['position'].get('probability'),
+        'p_artifacts': c['artifacts'].get('probability'),
         'angle_deg': c['axis']['angle_deg'],
         'curvature_mm': c['axis']['curvature_mm'],
         'iliac_area': c['position']['iliac_area'],

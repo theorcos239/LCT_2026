@@ -17,6 +17,8 @@
     GET  /jobs/{id}/report       итоговая таблица (.xlsx или .csv)
     GET  /jobs/{id}/details      все измерения в JSON
     GET  /jobs/{id}/overlays     zip с визуализацией нарушений
+    GET  /jobs/{id}/overlays/{name}  один кадр из этого zip (PNG) — для интерфейса
+    GET  /                       веб-интерфейс (ТЗ 2.6)
     GET  /jobs/{id}/sr           zip с DICOM SR на каждый кадр
 
 Пакетная обработка идёт заданием в фоне, а не в запросе: закрытый тестовый
@@ -42,8 +44,11 @@ from pathlib import Path
 import numpy as np
 
 try:
+    import zipfile
+
     from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Query, UploadFile
-    from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+    from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+    from fastapi.staticfiles import StaticFiles
 except ImportError as e:                    # noqa: F841
     raise SystemExit('нужен fastapi: pip install fastapi uvicorn python-multipart') from e
 
@@ -116,7 +121,8 @@ def _cleanup_jobs(now: float | None = None) -> None:
             JOBS.pop(job_id, None)
 
 
-def _run_job(job: Job, data_dir: Path, fmt: str, overlays: bool, sr: bool = False) -> None:
+def _run_job(job: Job, data_dir: Path, fmt: str, overlays: bool, sr: bool = False,
+             all_frames: bool = False) -> None:
     try:
         job.state = 'running'
 
@@ -134,7 +140,8 @@ def _run_job(job: Job, data_dir: Path, fmt: str, overlays: bool, sr: bool = Fals
                 for fr in unique_frames(s)[0]:
                     frames[fr.image_uid] = fr
             if overlays:
-                write_overlays(rows, frames, job.workdir / 'overlays.zip')
+                write_overlays(rows, frames, job.workdir / 'overlays.zip',
+                               only_violations=not all_frames)
             if sr:
                 write_sr(rows, frames, job.workdir / 'sr.zip')
         job.summary = summary(rows)
@@ -271,6 +278,7 @@ async def batch(background: BackgroundTasks,
                 fmt: str = Query('xlsx', pattern='^(xlsx|csv)$'),
                 overlays: bool = Query(False, description='приложить zip с визуализацией'),
                 sr: bool = Query(False, description='приложить zip с DICOM SR'),
+                all_frames: bool = Query(False, description='оверлеи и для качественных кадров'),
                 wait: bool = Query(False, description='дождаться результата в этом же запросе')):
     """Zip с исследованиями -> задание на пакетную обработку."""
     _cleanup_jobs()
@@ -292,9 +300,9 @@ async def batch(background: BackgroundTasks,
     JOBS[job.id] = job
 
     if wait:
-        _run_job(job, data, fmt, overlays, sr)
+        _run_job(job, data, fmt, overlays, sr, all_frames)
         return JSONResponse(job.public())
-    background.add_task(_run_job, job, data, fmt, overlays, sr)
+    background.add_task(_run_job, job, data, fmt, overlays, sr, all_frames)
     return JSONResponse(job.public(), status_code=202)
 
 
@@ -342,6 +350,47 @@ def job_overlays(job_id: str) -> FileResponse:
     return _artifact(job_id, ['overlays.zip'], 'application/zip', f'overlays_{job_id}')
 
 
+@app.get('/jobs/{job_id}/overlays/{name}')
+def job_overlay_one(job_id: str, name: str) -> StreamingResponse:
+    """Один кадр из архива оверлеев.
+
+    Пиксели задания удаляются сразу после обработки, перерисовать кадр нельзя —
+    поэтому интерфейс берёт готовую картинку из уже собранного zip.
+    """
+    job = _job(job_id)
+    archive = (job.workdir or Path('.')) / 'overlays.zip'
+    if job.state != 'done' or not archive.exists():
+        raise HTTPException(404, 'оверлеи для этого задания не собраны')
+    # Интерфейс просит кадр по image_uid, оператор может знать имя записи —
+    # принимаем оба варианта.
+    safe = Path(name).name
+    key = safe[:-4] if safe.lower().endswith('.png') else safe
+    with zipfile.ZipFile(archive) as z:
+        names = z.namelist()
+        match = next((n for n in names if Path(n).name == safe), None)
+        if match is None and key:
+            match = next((n for n in names if n.endswith(f'__{key[-12:]}.png')), None)
+        if match is None:
+            raise HTTPException(404, 'кадр не найден в архиве')
+        data = z.read(match)
+    return StreamingResponse(io.BytesIO(data), media_type='image/png')
+
+
 @app.get('/jobs/{job_id}/sr')
 def job_sr(job_id: str) -> FileResponse:
     return _artifact(job_id, ['sr.zip'], 'application/zip', f'sr_{job_id}')
+
+
+# --------------------------------------------------------------------------- #
+#  Веб-интерфейс (ТЗ 2.6)
+# --------------------------------------------------------------------------- #
+# Раздаём страницу из самого сервиса, а не отдельным origin: тогда не нужен
+# CORS, контейнер остаётся один, и утверждение «изображения за пределы
+# контейнера не уходят» остаётся верным.
+STATIC = Path(__file__).resolve().parent / 'static'
+if STATIC.exists():
+    app.mount('/static', StaticFiles(directory=STATIC), name='static')
+
+    @app.get('/', response_class=HTMLResponse, include_in_schema=False)
+    def index() -> HTMLResponse:
+        return HTMLResponse((STATIC / 'index.html').read_text(encoding='utf-8'))

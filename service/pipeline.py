@@ -28,6 +28,8 @@ from pathlib import Path
 
 import numpy as np
 
+from spine_qc import probability
+
 from .dicom_io import Frame, unique_frames
 
 # --------------------------------------------------------------------------- #
@@ -126,6 +128,21 @@ class Analyzer:
                                        'iliac_visible': kp['iliac']}
         return kp
 
+    def _spine_probabilities(self, criteria: dict, out: dict) -> None:
+        """Калиброванная вероятность нарушения по каждому критерию позвоночника.
+
+        Считается после возможной подмены оси моделью точек: вероятность
+        должна идти от того же измерения, что и вердикт.
+        """
+        params = self.spine.thresholds.get('probability', {})
+        for crit, key in (('position', 'spine_position'), ('axis', 'spine_axis'),
+                          ('artifacts', 'spine_artifacts')):
+            c = criteria[crit]
+            if c.get('probability') is None:
+                c['probability'] = probability.apply(
+                    params.get(crit), probability.score_of(crit, c))
+            out['probabilities'][key] = c['probability']
+
     # ------------------------------------------------------------------ #
     def analyze_pixels(self, px: np.ndarray) -> dict:
         """Пиксели -> область, критерии, нарушения. Без чтения файлов."""
@@ -137,6 +154,7 @@ class Analyzer:
             'region_accepted': bool(accepted),
             'region_novelty': round(float(r['novelty']), 4),
             'violations': [], 'details': {}, 'flags': [],
+            'probabilities': {},        # калиброванные вероятности по критериям
         }
         if not accepted and self.strict_region:
             # Кадр не похож на то, на чём учились модели. Пропустить его как
@@ -166,6 +184,7 @@ class Analyzer:
                     out['flags'].append('axis:keypoints_vs_contour_disagree')
                 out['details']['spine']['axis'] = kp['axis']
                 res['criteria']['axis'] = kp['axis']
+            self._spine_probabilities(res['criteria'], out)
             for crit, key in (('position', 'spine_position'), ('axis', 'spine_axis'),
                               ('artifacts', 'spine_artifacts')):
                 if res['criteria'][crit]['violated']:
@@ -208,6 +227,9 @@ class Analyzer:
             out['flags'] += list(rot.get('flags', []))
             if rot.get('violated'):
                 out['violations'].append('hip_rotation')
+        # Критерии бедра пока без калибровки: свод считается по тем, у кого
+        # вероятность есть, при их отсутствии остаётся None.
+        out['quality_probability'] = probability.combine(out['probabilities'].values())
         return out
 
     # ------------------------------------------------------------------ #
@@ -228,6 +250,9 @@ class Analyzer:
             res = self.analyze_pixels(frame.pixels)
             row['anatomical_region'] = res['anatomical_region']
             row['quality_class'] = int(bool(res['violations']))
+            row['quality_probability'] = res.get('quality_probability')
+            for key, pv in res.get('probabilities', {}).items():
+                row[f'p_{key}'] = pv
             row['violation_type'] = ';'.join(res['violations'])
             row['violation_description'] = '; '.join(VIOLATIONS[v] for v in res['violations'])
             row['region_confidence'] = res['region_confidence']
