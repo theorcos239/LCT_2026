@@ -101,6 +101,20 @@ class Job:
 
 JOBS: dict[str, Job] = {}
 
+# Сколько хранить результаты завершённого задания. Без срока каталог заданий
+# растёт без предела, и долго работающий сервис однажды заполнит диск.
+JOB_TTL_HOURS = float(os.environ.get('DXA_QC_JOB_TTL_HOURS', '24'))
+
+
+def _cleanup_jobs(now: float | None = None) -> None:
+    """Удаляет завершённые задания старше JOB_TTL_HOURS вместе с их файлами."""
+    now = time.time() if now is None else now
+    for job_id, job in list(JOBS.items()):
+        if job.finished is not None and now - job.finished > JOB_TTL_HOURS * 3600:
+            if job.workdir is not None:
+                shutil.rmtree(job.workdir, ignore_errors=True)
+            JOBS.pop(job_id, None)
+
 
 def _run_job(job: Job, data_dir: Path, fmt: str, overlays: bool, sr: bool = False) -> None:
     try:
@@ -259,12 +273,16 @@ async def batch(background: BackgroundTasks,
                 sr: bool = Query(False, description='приложить zip с DICOM SR'),
                 wait: bool = Query(False, description='дождаться результата в этом же запросе')):
     """Zip с исследованиями -> задание на пакетную обработку."""
+    _cleanup_jobs()
     job = Job(id=uuid.uuid4().hex[:12])
     job.workdir = JOBS_DIR / job.id
     job.workdir.mkdir(parents=True, exist_ok=True)
     data = job.workdir / 'data'
     archive = job.workdir / 'upload.zip'
-    archive.write_bytes(await file.read())
+    # Потоком на диск, а не file.read(): архив закрытого набора может весить
+    # гигабайты, держать его целиком в памяти процесса незачем.
+    with archive.open('wb') as fh:
+        shutil.copyfileobj(file.file, fh, length=1 << 20)
     try:
         extract_archive(archive, data)
     except Exception as e:

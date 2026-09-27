@@ -436,6 +436,45 @@ def test_pacs_export_layout() -> None:
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
+def test_batch_api() -> None:
+    """Пакетный путь API целиком: zip -> задание -> отчёт, SR -> очистка по сроку."""
+    import io
+    import zipfile
+
+    try:
+        from fastapi.testclient import TestClient
+    except (ImportError, RuntimeError):
+        check('POST /batch (пропущено: нет fastapi или httpx)', True)
+        return
+    from . import api
+
+    study = sorted(DATA.iterdir())[0]
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w') as z:
+        for f in study.rglob('*'):
+            if f.is_file():
+                z.write(f, f'{study.name}/{f.relative_to(study).as_posix()}')
+    c = TestClient(api.app)
+    r = c.post('/batch?fmt=csv&wait=true&sr=true',
+               files={'file': ('studies.zip', buf.getvalue(), 'application/zip')})
+    job = r.json()
+    check('POST /batch?wait=true завершает задание',
+          r.status_code == 200 and job.get('state') == 'done', str(job.get('error') or job.get('state')))
+    if job.get('state') != 'done':
+        return
+    rep = c.get(f"/jobs/{job['id']}/report")
+    check('GET /jobs/{id}/report отдаёт таблицу ТЗ',
+          rep.status_code == 200 and rep.content.decode('utf-8').startswith('path_to_study'))
+    sr = c.get(f"/jobs/{job['id']}/sr")
+    n_sr = len(zipfile.ZipFile(io.BytesIO(sr.content)).namelist()) if sr.status_code == 200 else 0
+    check('GET /jobs/{id}/sr отдаёт SR на каждый кадр',
+          n_sr == job['summary']['success'], f"{n_sr} из {job['summary']['success']}")
+
+    workdir = api.JOBS[job['id']].workdir
+    api._cleanup_jobs(now=time.time() + api.JOB_TTL_HOURS * 3600 + 1)
+    check('задание старше срока удаляется вместе с файлами',
+          job['id'] not in api.JOBS and not workdir.exists())
+
 # --------------------------------------------------------------------------- #
 def main() -> int:
     ap = argparse.ArgumentParser(description='Тесты сервиса контроля качества DXA')
@@ -460,6 +499,7 @@ def main() -> int:
             test_dedup_and_regions()
             test_compressed_dicom()
             test_pacs_export_layout()
+            test_batch_api()
             test_determinism()
             test_timing()
             print('модель ключевых точек')
