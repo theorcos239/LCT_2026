@@ -29,8 +29,11 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Ставим замороженный набор с транзитивными зависимостями, а не
+# requirements.txt: иначе starlette, pydantic и прочие подбирались бы заново
+# при каждой сборке. pip check — страховка от неполного lock-файла.
+COPY requirements.txt requirements.lock ./
+RUN pip install --no-cache-dir -r requirements.lock && pip check
 
 # Код и веса. Обучающий набор в образ не кладётся: данные монтируются снаружи.
 COPY region_clf/ region_clf/
