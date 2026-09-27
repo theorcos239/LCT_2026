@@ -87,20 +87,29 @@ class Predictor:
         }
 
 
-def fold_checkpoints(run_dir: str | Path | None = None) -> list[Path]:
-    """Лучшие веса каждого фолда в каталоге прогона.
+def fold_checkpoints(run_dir: str | Path | None = None,
+                     folds: list[int] | None = None) -> list[Path]:
+    """Лучшие веса каждого фолда в каталоге прогона (или только перечисленных).
 
     `fold{N}_last.pt` — это состояние для продолжения обучения (оптимизатор,
     расписание, история), в ансамбль оно не идёт: там веса последней эпохи, а
     не лучшей.
     """
     d = Path(run_dir) if run_dir is not None else RUN_DIR
-    return sorted(p for p in d.glob("fold*.pt") if not p.name.endswith("_last.pt"))
+    ckpts = sorted(p for p in d.glob("fold*.pt") if not p.name.endswith("_last.pt"))
+    if folds is not None:
+        ckpts = [p for p in ckpts if p.stem in {f"fold{k}" for k in folds}]
+    return ckpts
 
 
-def load_predictor(run_dir: str | Path | None = None, device: str = "cpu") -> Predictor:
-    """Ансамбль всех обученных фолдов из каталога прогона."""
-    ckpts = fold_checkpoints(run_dir)
+def load_predictor(run_dir: str | Path | None = None, device: str = "cpu",
+                   folds: list[int] | None = None) -> Predictor:
+    """Ансамбль обученных фолдов из каталога прогона.
+
+    `folds` — только эти фолды: модель одного фолда не видела в обучении его
+    кадры, на этом строится честная out-of-fold оценка сервиса.
+    """
+    ckpts = fold_checkpoints(run_dir, folds)
     if not ckpts:
         raise FileNotFoundError(
             f"в {Path(run_dir) if run_dir is not None else RUN_DIR} нет весов fold*.pt")

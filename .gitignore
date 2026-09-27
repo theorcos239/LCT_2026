@@ -13,3 +13,10 @@ runs/**
 !runs/keypoints/metrics_*.csv
 !runs/keypoints/fold*_history.csv
 !runs/keypoints/oof.npz
+# Метрики сравнения «точки против контура» (python -m service.evaluate
+# --keypoints-oof / --keypoints --out runs/eval_*/metrics.json) — на них
+# опирается таблица в README.
+!runs/eval_oof/
+!runs/eval_oof/metrics.json
+!runs/eval_ens/
+!runs/eval_ens/metrics.json

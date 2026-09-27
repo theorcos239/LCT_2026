@@ -78,20 +78,36 @@ def _risk_score(vtype: str, details: dict) -> float:
     return float('nan')
 
 
-def run(hip_method: str = 'kit2', keypoints: bool = False) -> pd.DataFrame:
+def run(hip_method: str = 'kit2', keypoints: bool = False,
+        keypoints_oof: bool = False) -> pd.DataFrame:
     """Прогон конвейера по всем уникальным кадрам обучающего набора.
 
     keypoints=True считает ось позвоночника и отступы ROI моделью ключевых
     точек. Сравнивать два прогона осмысленно: набор кадров и метки одни и те
     же, меняется только измеритель.
+
+    keypoints_oof=True — то же, но честно: кадр считает модель только того
+    фолда, который этот кадр в обучении не видел. Ансамбль всех фолдов на
+    обучающем наборе — оценка на данных обучения: разметка точек есть у всех
+    242 кадров pack, и каждый из них видели четыре модели из пяти.
     """
+    from .keypoints_backend import KeypointBackend
     from .pipeline import Analyzer
 
     df = trainset.frames()
-    a = Analyzer.load(hip_method=hip_method, keypoints=keypoints)
+    a = Analyzer.load(hip_method=hip_method, keypoints=keypoints or keypoints_oof)
+    by_fold = {}
+    if keypoints_oof:
+        for k in sorted(df.fold.unique()):
+            by_fold[int(k)] = KeypointBackend(folds=[int(k)])
+        missing = [k for k, b in by_fold.items() if not b.available]
+        if missing:
+            raise SystemExit(f'для OOF нужны веса всех фолдов, нет: {missing}')
     rows = []
     for r in df.itertuples():
         px = trainset.read(r.rel_path)
+        if by_fold:
+            a.keypoints = by_fold[int(r.fold)]
         import time
         t0 = time.perf_counter()
         try:
@@ -191,11 +207,13 @@ def main() -> int:
     ap.add_argument('--hip-method', default='kit2')
     ap.add_argument('--no-save', action='store_true')
     ap.add_argument('--keypoints', action='store_true',
-                    help='ось и отступы ROI считать моделью ключевых точек')
+                    help='ось и отступы ROI считать моделью ключевых точек (ансамбль)')
+    ap.add_argument('--keypoints-oof', action='store_true',
+                    help='то же, но каждый кадр считает модель фолда, не видевшая его')
     ap.add_argument('--out', type=Path, default=METRICS, help='куда положить метрики')
     args = ap.parse_args()
 
-    d = run(args.hip_method, keypoints=args.keypoints)
+    d = run(args.hip_method, keypoints=args.keypoints, keypoints_oof=args.keypoints_oof)
     print(f'{len(d)} кадров, {d.study.nunique()} исследований, '
           f'ошибок {(d.status == "Failure").sum()}')
     res = evaluate(d, n_boot=0 if args.quick else 2000)
