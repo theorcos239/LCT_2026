@@ -604,6 +604,7 @@ DXA_QC_KEYPOINTS=1 uvicorn service.api:app       # то же для HTTP API
 |---|---|
 | битый или не-DICOM файл | строка `Failure`, пачка продолжается |
 | сжатый DICOM (RLE, JPEG, JPEG-LS, JPEG 2000) | читается штатно, пиксели совпадают с несжатым |
+| DICOMDIR, SR/PDF-отчёты, `.DS_Store`, `__MACOSX/` рядом со снимками | не снимки — строк не дают; DICOMDIR в корне не склеивает выгрузку в одно исследование |
 | пустая папка исследования | строка `Failure` с пояснением |
 | кадр не похож на DXA | `anatomical_region = unknown`, `violation_type = undetermined`, уходит на ручной разбор |
 | перевёрнутый кадр | ловится проверкой ориентации в `region_clf` (100% на суррогатах) |

@@ -385,6 +385,57 @@ def test_compressed_dicom() -> None:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_pacs_export_layout() -> None:
+    """Выгрузка из PACS: DICOMDIR в корне, служебные файлы, SR рядом со снимками.
+
+    Раньше DICOMDIR в корне превращал всю выгрузку в одно исследование, а
+    каждый служебный файл давал строку Failure. Не снимок — не строка отчёта;
+    битый .dcm — по-прежнему Failure.
+    """
+    import pydicom
+    from pydicom.dataset import FileDataset, FileMetaDataset
+    from pydicom.uid import ExplicitVRLittleEndian, generate_uid
+
+    from .dicom_io import study_dirs, unique_frames
+    from .dicom_sr import build_sr
+    from .pipeline import REGION_RU, VIOLATIONS, Analyzer, process_batch
+
+    tmp = Path(tempfile.mkdtemp(prefix='dxa_pacs_'))
+    try:
+        studies = sorted(DATA.iterdir())[:2]
+        for st in studies:
+            shutil.copytree(st, tmp / st.name)
+        meta = FileMetaDataset()
+        meta.MediaStorageSOPClassUID = '1.2.840.10008.1.3.10'      # Media Storage Directory
+        meta.MediaStorageSOPInstanceUID = generate_uid()
+        meta.TransferSyntaxUID = ExplicitVRLittleEndian
+        ddir = FileDataset(None, {}, file_meta=meta, preamble=bytes(128))
+        ddir.SOPClassUID = meta.MediaStorageSOPClassUID
+        ddir.save_as(str(tmp / 'DICOMDIR'), enforce_file_format=True)
+
+        first = tmp / studies[0].name
+        mac = tmp / '__MACOSX' / first.name
+        mac.mkdir(parents=True)
+        (mac / '._CR000000.dcm').write_bytes(bytes([0, 5, 22, 7]) + bytes(60))
+        (first / '.DS_Store').write_bytes(bytes([0, 0, 0, 1]) + b'Bud1' + bytes(40))
+        fr = unique_frames(first)[0][0]
+        src = pydicom.dcmread(str(fr.path), stop_before_pixels=True)
+        sr = build_sr(src, Analyzer.load().analyze_pixels(fr.pixels), VIOLATIONS, REGION_RU)
+        sr.save_as(str(first / 'report.sr.dcm'), enforce_file_format=True)
+        (first / 'broken.dcm').write_bytes(b'not a dicom at all')
+
+        check('DICOMDIR в корне не склеивает выгрузку в одно исследование',
+              len(study_dirs(tmp)) == len(studies), f'{len(study_dirs(tmp))} из {len(studies)}')
+        rows = process_batch(tmp, Analyzer.load())
+        fails = [r for r in rows if r['processing_status'] == 'Failure']
+        expected = sum(len(unique_frames(st)[0]) for st in studies)
+        check('служебные файлы и SR не дают строк, битый .dcm — даёт Failure',
+              len(rows) == expected + 1 and [r['file_name'] for r in fails] == ['broken.dcm'],
+              f'строк {len(rows)}, ожидалось {expected + 1}; '
+              f'Failure: {[r["file_name"] for r in fails]}')
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
 # --------------------------------------------------------------------------- #
 def main() -> int:
     ap = argparse.ArgumentParser(description='Тесты сервиса контроля качества DXA')
@@ -408,6 +459,7 @@ def main() -> int:
             print('данные')
             test_dedup_and_regions()
             test_compressed_dicom()
+            test_pacs_export_layout()
             test_determinism()
             test_timing()
             print('модель ключевых точек')

@@ -28,6 +28,29 @@ import numpy as np
 SUFFIXES = {'.dcm', '.dicom', ''}
 _SILENCED = False
 
+# Служебные файлы, которые лежат рядом со снимками в выгрузках из PACS и в
+# архивах, собранных на macOS. Снимками они не являются, и строка Failure на
+# каждый из них испортила бы и отчёт («одна строка — одно изображение»), и
+# долю успешно обработанных файлов.
+_SERVICE_NAMES = {'dicomdir', 'thumbs.db', 'desktop.ini'}
+
+
+class NotAnImage(ValueError):
+    """Валидный DICOM без пикселей: DICOMDIR, SR, отчёт PDF, KO, PR.
+
+    Это не снимок, поэтому строки отчёта он не даёт — в отличие от битого
+    файла, который снимком быть должен и уходит в Failure.
+    """
+
+
+def _is_service_file(p: Path) -> bool:
+    return (p.name.lower() in _SERVICE_NAMES or p.name.startswith('.')
+            or '__MACOSX' in p.parts)
+
+
+def _is_candidate(p: Path) -> bool:
+    return p.is_file() and p.suffix.lower() in SUFFIXES and not _is_service_file(p)
+
 
 def _silence() -> None:
     """pydicom шумит на невалидных UID (1.2.643…) и длинных LO-полях."""
@@ -59,6 +82,9 @@ def read_frame(path: str | Path, study_key: str | None = None) -> Frame:
     _silence()
     p = Path(path)
     ds = pydicom.dcmread(str(p))
+    if not any(k in ds for k in ('PixelData', 'FloatPixelData', 'DoubleFloatPixelData')):
+        sop = ds.get('SOPClassUID')
+        raise NotAnImage(f'нет пиксельных данных: {getattr(sop, "name", sop) or "без SOPClassUID"}')
     px = ds.pixel_array
     try:
         px = apply_voi_lut(px, ds)
@@ -85,12 +111,15 @@ def read_frame(path: str | Path, study_key: str | None = None) -> Frame:
 
 
 def dicom_files(root: str | Path) -> list[Path]:
-    """Все файлы, похожие на DICOM, рекурсивно и в детерминированном порядке."""
+    """Все файлы, похожие на DICOM, рекурсивно и в детерминированном порядке.
+
+    Служебные файлы (DICOMDIR, .DS_Store, __MACOSX/) отсеиваются по имени.
+    Явно указанный файл берётся как есть.
+    """
     p = Path(root)
     if p.is_file():
         return [p]
-    return [f for f in sorted(p.rglob('*'))
-            if f.is_file() and f.suffix.lower() in SUFFIXES]
+    return [f for f in sorted(p.rglob('*')) if _is_candidate(f)]
 
 
 def study_dirs(root: str | Path) -> list[Path]:
@@ -99,11 +128,15 @@ def study_dirs(root: str | Path) -> list[Path]:
     Исследование — это папка, внутри которой (на любой глубине) лежат DICOM.
     Если `root` сам содержит файлы, он и есть единственное исследование:
     так работает и «архив из 100 папок», и «одно исследование», и «один файл».
+
+    Служебные файлы в корне не считаются: экспорт из PACS — это DICOMDIR в
+    корне плюс папки исследований, и без этого фильтра вся выгрузка стала бы
+    одним исследованием с общей дедупликацией через границы пациентов.
     """
     p = Path(root)
     if p.is_file():
         return [p.parent]
-    if any(f.is_file() and f.suffix.lower() in SUFFIXES for f in p.iterdir() if f.is_file()):
+    if any(_is_candidate(f) for f in p.iterdir()):
         return [p]
     subs = [d for d in sorted(p.iterdir()) if d.is_dir() and dicom_files(d)]
     return subs or ([p] if dicom_files(p) else [])
@@ -116,13 +149,26 @@ def unique_frames(study: str | Path, study_key: str | None = None
     Дедупликация идёт ВНУТРИ исследования: одинаковых кадров в разных
     исследованиях в обучающем наборе нет, а схлопывать их между пациентами
     было бы неверно в принципе.
+
+    Не снимки в `failed` не попадают и строк отчёта не дают: DICOM без
+    пикселей (DICOMDIR, SR, PDF) и файл без расширения, который вообще не
+    DICOM. Битый файл `.dcm` — попадает: он обязан был быть снимком.
     """
+    from pydicom.errors import InvalidDicomError
+
     key = study_key or Path(study).name
     seen: dict[str, Frame] = {}
     failed: list[tuple[Path, Exception]] = []
     for f in dicom_files(study):
         try:
             fr = read_frame(f, key)
+        except NotAnImage:
+            continue
+        except InvalidDicomError as e:
+            if f.suffix == '':
+                continue                            # посторонний файл без расширения
+            failed.append((f, e))
+            continue
         except Exception as e:                       # битый файл не роняет пачку
             failed.append((f, e))
             continue

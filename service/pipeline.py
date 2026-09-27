@@ -274,7 +274,7 @@ def process_study(study: str | Path, analyzer: Analyzer,
             'path_to_study': shown, 'study_uid': '', 'image_uid': '',
             'anatomical_region': 'unknown', 'quality_class': 1, 'violation_type': '',
             'violation_description': '', 'processing_status': 'Failure',
-            'time_of_processing': 0.0, 'error': 'в исследовании не найдено DICOM-файлов',
+            'time_of_processing': 0.0, 'error': 'в исследовании не найдено DICOM-снимков',
             'file_name': '', 'flags': '', 'details': {}, 'duplicates': 0,
         })
     return rows
