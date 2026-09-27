@@ -98,9 +98,14 @@ def run_fold(cfg: dict, data: dict, fold: int, device: torch.device,
                   use_clahe=d["use_clahe"], seed=cfg["seed"])
     train_ds = KeypointDataset(data, train_idx, aug=AugmentConfig(**cfg["augment"]), **common)
     val_ds = KeypointDataset(data, val_idx, aug=AugmentConfig(enabled=False), **common)
+    # persistent_workers: без него воркеры пересоздаются на каждой эпохе, и на
+    # Windows (spawn) каждый заново получает весь pack — эпоха шла 19 с вместо
+    # 2.3 с при GPU, загруженном на 2 %. Подготовка кадра стоит ~3 мс, так что
+    # и num_workers=0 почти не проигрывает.
+    loader = dict(num_workers=t["num_workers"], persistent_workers=t["num_workers"] > 0)
     train_dl = DataLoader(train_ds, batch_size=t["batch_size"], shuffle=True,
-                          num_workers=t["num_workers"], drop_last=len(train_ds) > t["batch_size"])
-    val_dl = DataLoader(val_ds, batch_size=t["batch_size"], num_workers=t["num_workers"])
+                          drop_last=len(train_ds) > t["batch_size"], **loader)
+    val_dl = DataLoader(val_ds, batch_size=t["batch_size"], **loader)
 
     model = KeypointNet(len(names), tuple(cfg["model"]["decoder_channels"]),
                         cfg["model"]["pretrained"]).to(device)
@@ -174,6 +179,37 @@ def run_fold(cfg: dict, data: dict, fold: int, device: torch.device,
     return best
 
 
+def save_predictions(data: dict, oof: dict, thresholds: pd.Series, out_dir: Path) -> None:
+    """OOF-предсказания в двух видах: npz для кода и csv для анализа.
+
+    К координатам прикладываются идентификаторы кадра (id, исследование,
+    область, сторона): без них предсказания невозможно связать ни с метками
+    эксперта, ни с DICOM, а порядок строк в npz зависит от сборки датасета.
+    """
+    idx = oof["index"]
+    ident = {k: np.asarray(data[k])[idx] for k in ("ids", "studies", "regions", "sides")}
+    np.savez_compressed(out_dir / "oof.npz", names=np.array(data["names"]),
+                        thresholds=thresholds.to_numpy(), **ident, **oof)
+
+    rows = []
+    for row, (name_i) in enumerate(idx):                     # кадр
+        for c, point in enumerate(data["names"]):            # канал
+            rows.append({
+                "id": ident["ids"][row], "study": ident["studies"][row],
+                "region": ident["regions"][row], "side": ident["sides"][row],
+                "point": point,
+                "x": round(float(oof["pred"][row, c, 0]), 2),
+                "y": round(float(oof["pred"][row, c, 1]), 2),
+                "confidence": round(float(oof["conf"][row, c]), 4),
+                "predicted_visible": bool(oof["conf"][row, c] >= thresholds.iloc[c]),
+                "x_true": round(float(oof["true"][row, c, 0]), 2) if oof["visible"][row, c] else None,
+                "y_true": round(float(oof["true"][row, c, 1]), 2) if oof["visible"][row, c] else None,
+                "true_visible": bool(oof["visible"][row, c]),
+                "labeled": bool(oof["labeled"][row, c]),
+            })
+    pd.DataFrame(rows).to_csv(out_dir / "oof_points.csv", index=False)
+
+
 def train_all(cfg: dict, resume: bool = True, on_checkpoint=None) -> dict:
     """Обучение по всем фолдам конфига. Возвращает OOF-предсказания, метрики и пороги.
 
@@ -211,7 +247,7 @@ def train_all(cfg: dict, resume: bool = True, on_checkpoint=None) -> dict:
     thresholds.to_csv(out_dir / "thresholds.csv")
     table.to_csv(out_dir / "metrics_per_point.csv", index=False)
     e2e.to_csv(out_dir / "metrics_end_to_end.csv", index=False)
-    np.savez_compressed(out_dir / "oof.npz", **merged)
+    save_predictions(data, merged, thresholds, out_dir)
     return {"data": data, "oof": merged, "per_point": table, "end_to_end": e2e,
             "thresholds": thresholds, "out_dir": out_dir, "device": str(device)}
 

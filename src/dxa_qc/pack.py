@@ -77,11 +77,11 @@ def latest_annotations(annotations: list[str | Path]) -> dict[str, dict]:
 
 
 def build(annotations: list[str | Path], html: str | Path, studies_root: str | Path,
-          spine_edges: bool = True, canvas: tuple[int, int] = (352, 320),
+          points: str = 'full', canvas: tuple[int, int] = (352, 320),
           statuses: tuple[str, ...] = STATUSES) -> dict:
-    names = P.channels(spine_edges)
+    names = P.channels(points)
     idx = {n: i for i, n in enumerate(names)}
-    regions = P.region_slices(spine_edges)
+    regions = P.region_slices(points)
     matched = match_ids(html_images(html), unique_images(scan_studies(studies_root)))
 
     records, skipped = [], []
@@ -101,7 +101,9 @@ def build(annotations: list[str | Path], html: str | Path, studies_root: str | P
             continue
         if h > canvas[0] or w > canvas[1]:
             # выбросы вне холста в обучение не идут, они уходят в смоук-тест
-            skipped.append((uid, f"размер {h}×{w} больше холста {canvas[0]}×{canvas[1]}"))
+            # «x», а не «×»: причина печатается, а «×» нет в cp1251 — в консоли
+            # Windows print падал уже после записи npz, и процесс выходил с 1.
+            skipped.append((uid, f"размер {h}x{w} больше холста {canvas[0]}x{canvas[1]}"))
             continue
         # Долю считаем от основных точек: боковые края тел — отдельный проход,
         # их отсутствие не повод браковать снимок.
@@ -157,14 +159,14 @@ def main() -> None:
     p.add_argument("--html", required=True, help="сборка со всеми снимками (razmetka_all.html)")
     p.add_argument("--studies", required=True, help="папка Исследования")
     p.add_argument("--out", required=True)
-    p.add_argument("--no-spine-edges", action="store_true")
+    p.add_argument("--points", default="full", choices=sorted(P.SETS),
+                   help="full: 29 каналов, core: 21 (без боковых краёв), minimal: 14")
     p.add_argument("--canvas", nargs=2, type=int, default=[352, 320])
     p.add_argument("--statuses", nargs="+", default=list(STATUSES))
     a = p.parse_args()
 
-    pack = build(a.annotations, a.html, a.studies,
-                 spine_edges=not a.no_spine_edges, canvas=tuple(a.canvas),
-                 statuses=tuple(a.statuses))
+    pack = build(a.annotations, a.html, a.studies, points=a.points,
+                 canvas=tuple(a.canvas), statuses=tuple(a.statuses))
     save(pack, a.out)
     n = len(pack["records"])
     reg = [r["region"] for r in pack["records"]]
