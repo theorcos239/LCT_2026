@@ -101,7 +101,9 @@ def build(annotations: list[str | Path], html: str | Path, studies_root: str | P
             continue
         if h > canvas[0] or w > canvas[1]:
             # выбросы вне холста в обучение не идут, они уходят в смоук-тест
-            skipped.append((uid, f"размер {h}×{w} больше холста {canvas[0]}×{canvas[1]}"))
+            # «x», а не «×»: причина печатается, а «×» нет в cp1251 — в консоли
+            # Windows print падал уже после записи npz, и процесс выходил с 1.
+            skipped.append((uid, f"размер {h}x{w} больше холста {canvas[0]}x{canvas[1]}"))
             continue
         # Долю считаем от основных точек: боковые края тел — отдельный проход,
         # их отсутствие не повод браковать снимок.

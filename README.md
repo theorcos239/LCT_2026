@@ -375,10 +375,14 @@ python -m service.evaluate --keypoints --out runs/metrics_keypoints.json
 см. `requirements-train.txt`):
 
 ```bash
-python -m dxa_qc.pack --annotations data/*.json --html razmetka_all.html \
+PYTHONPATH=src python -m dxa_qc.pack --annotations data/*.json \
+       --html Processing/razmetka_all.html \
        --studies НД_для_обучения/Исследования --out data/keypoints.npz
-python -m dxa_qc.train --config configs/keypoints.yaml
+PYTHONPATH=src python -m dxa_qc.train --config configs/keypoints.yaml
 ```
+
+`src/` пакетом не ставится, поэтому `PYTHONPATH=src`. Подробно — дообучение,
+перенос на другой аппарат, фолды — в [docs/TRAINING.md](docs/TRAINING.md).
 
 Разбиение фиксировано в `folds.csv` и код его только читает. Группа —
 **исследование**: два бедра одного пациента похожи, и разойдись они по фолдам,
