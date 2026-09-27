@@ -1,0 +1,24 @@
+# Вариант образа с моделью ключевых точек (необязательный, для экспериментов).
+#
+#     ./build.sh                                              # сначала базовый образ
+#     docker build -f Dockerfile.keypoints -t dxa-qc:keypoints .
+#     docker run -p 8000:8000 -e DXA_QC_KEYPOINTS=1 \
+#         -v "$PWD/runs:/app/runs:ro" dxa-qc:keypoints
+#
+# Базовый образ (162 МБ) остаётся рабочим контуром: модель точек по умолчанию
+# выключена, потому что на обучающей выборке пока не выигрывает у контурной
+# геометрии (README, «Модель ключевых точек»). Этот образ добавляет только
+# torch/torchvision в CPU-сборке — без CUDA, GPU сервису не нужен. Веса
+# (runs/keypoints, 187 МБ) в образ не кладутся и монтируются снаружи.
+#
+# Версии те же, на которых обучена модель (requirements-train.txt).
+ARG BASE=dxa-qc:1.0.0
+FROM ${BASE}
+
+USER root
+RUN pip install --no-cache-dir \
+        --index-url https://download.pytorch.org/whl/cpu \
+        torch==2.5.1 torchvision==0.20.1
+USER dxa
+
+ENV DXA_QC_KEYPOINTS=1
