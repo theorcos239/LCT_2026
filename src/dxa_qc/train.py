@@ -98,9 +98,14 @@ def run_fold(cfg: dict, data: dict, fold: int, device: torch.device,
                   use_clahe=d["use_clahe"], seed=cfg["seed"])
     train_ds = KeypointDataset(data, train_idx, aug=AugmentConfig(**cfg["augment"]), **common)
     val_ds = KeypointDataset(data, val_idx, aug=AugmentConfig(enabled=False), **common)
+    # persistent_workers: без него воркеры пересоздаются на каждой эпохе, и на
+    # Windows (spawn) каждый заново получает весь pack — эпоха шла 19 с вместо
+    # 2.3 с при GPU, загруженном на 2 %. Подготовка кадра стоит ~3 мс, так что
+    # и num_workers=0 почти не проигрывает.
+    loader = dict(num_workers=t["num_workers"], persistent_workers=t["num_workers"] > 0)
     train_dl = DataLoader(train_ds, batch_size=t["batch_size"], shuffle=True,
-                          num_workers=t["num_workers"], drop_last=len(train_ds) > t["batch_size"])
-    val_dl = DataLoader(val_ds, batch_size=t["batch_size"], num_workers=t["num_workers"])
+                          drop_last=len(train_ds) > t["batch_size"], **loader)
+    val_dl = DataLoader(val_ds, batch_size=t["batch_size"], **loader)
 
     model = KeypointNet(len(names), tuple(cfg["model"]["decoder_channels"]),
                         cfg["model"]["pretrained"]).to(device)
