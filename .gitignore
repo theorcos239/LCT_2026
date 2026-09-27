@@ -1,4 +1,15 @@
 __pycache__/
 *.pyc
 data/*.npz
-runs/
+
+# Прогоны модели точек: веса (fold*.pt, 187 МБ; *_last.pt — ещё 780 МБ) в git
+# не кладутся. Мелкие файлы прогона — нужны: конфиг и пороги видимости
+# читаются при инференсе, метрики и история обучения — отчётность (ТЗ 8.4),
+# oof.npz — OOF-предсказания, из которых метрики пересчитываются.
+runs/**
+!runs/keypoints/
+!runs/keypoints/config.yaml
+!runs/keypoints/thresholds.csv
+!runs/keypoints/metrics_*.csv
+!runs/keypoints/fold*_history.csv
+!runs/keypoints/oof.npz

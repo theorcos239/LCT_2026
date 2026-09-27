@@ -1,0 +1,64 @@
+seed: 0
+deterministic: true
+data:
+  pack: data/keypoints.npz
+  folds: folds.csv
+  spine_edges: true
+  canvas:
+  - 352
+  - 320
+  mm_per_px: 0.6
+  use_clahe: false
+  scale: 1
+model:
+  pretrained: true
+  decoder_channels:
+  - 256
+  - 128
+  - 64
+  - 32
+  - 16
+loss:
+  alpha: 2.0
+  beta: 4.0
+  soft_mask_weight: 0.15
+heatmap:
+  sigma: 2.0
+  decode_window: 11
+augment:
+  enabled: true
+  rotation_deg: 15.0
+  shift_frac: 0.1
+  scale: 0.1
+  brightness: 0.2
+  contrast: 0.2
+  gamma:
+  - 0.8
+  - 1.25
+  noise_std: 4.0
+  blur_sigma: 0.6
+  p_geometric: 0.9
+  p_intensity: 0.7
+  p_hflip_spine: 0.5
+train:
+  folds:
+  - 1
+  epochs: 600
+  batch_size: 16
+  num_workers: 4
+  lr_encoder: 3.0e-05
+  lr_decoder: 0.0003
+  weight_decay: 0.0001
+  warmup_epochs: 5
+  patience: 600
+  checkpoint_every: 50
+  ema_decay: 0.999
+  amp: false
+  out_dir: runs/keypoints
+infer:
+  visibility_threshold: 0.3
+  tta_rotations:
+  - -5
+  - 0
+  - 5
+  tta_flip_spine: true
