@@ -9,8 +9,9 @@
    комплекта считает отступы; пишет hip_roi/eval/margins_<kit>.csv.
 2. Сверяет вердикт с колонкой эксперта «корректности области интересов»
    (разметка.xlsx) — матрица ошибок, чувствительность/специфичность.
-3. Калибрует анатомический прибор d_TB (верхушка большого вертела -> низ ROI)
-   по кадрам, где B1 и B2 согласны и диафиз виден; пишет в metrics.json.
+3. Сверяет найденную нижнюю точку седалищной кости (низ ROI по рисунку 6 ТЗ)
+   с ручной разметкой точек (`contradictions/true_margins.csv`); пишет в
+   metrics.json. Ручные точки — не эталон, эталон вердикта — xlsx.
 4. Контактные листы: все расхождения с экспертом (disagree_<kit>.png), все
    7 помеченных экспертом кадров для всех комплектов (expert_positive.png).
 """
@@ -27,7 +28,7 @@ import pandas as pd
 
 from region_clf.features import read_image
 
-from .geometry import D_TB_MM, MM_PER_PX, px2mm
+from .geometry import D_TI_MM, MM_PER_PX, px2mm
 from .kits import measure_roi_margins
 from .overlay import contact_sheet, render_overlay
 
@@ -75,9 +76,6 @@ def run_all(frames: pd.DataFrame, methods: list[str]):
             row.update(study=r.study, rel_path=r.rel_path, rows=img.shape[0], expert_roi=r.expert_roi,
                        ms=round(dt * 1000, 1), flag_list=';'.join(res['flags']))
             row.pop('flags', None)
-            if m == 'kit2':
-                bc = res['diag'].get('B_candidates', {})
-                row.update(B_anchor=bc.get('anchor'), B6=bc.get('B6'), B7=bc.get('B7'))
             rows[m].append(row)
     print(f'обработано {len(frames)} кадров x {len(methods)} комплектов за {time.perf_counter() - t0:.1f} с')
     return {m: pd.DataFrame(v) for m, v in rows.items()}, imgs
@@ -103,30 +101,35 @@ def confusion(df: pd.DataFrame) -> dict:
     }
 
 
-def calibrate_d_tb(df2: pd.DataFrame) -> dict:
-    """Разброс измеренных оценок низа ROI вокруг анатомического якоря.
+MANUAL = Path(__file__).resolve().parent / 'contradictions' / 'true_margins.csv'
 
-    Показывает, насколько кадр вообще позволяет измерить низ ROI: B6 (по тону)
-    и B7 (по медиальному контуру) — независимые правила, и чем шире их
-    расхождение, тем меньше смысла в «измеренном» низе.
+
+def ischium_vs_manual(df2: pd.DataFrame) -> dict:
+    """Низ ROI (нижняя точка седалищной кости) против ручной разметки точек.
+
+    Проверяет сам измеритель, а не вердикт: вердикт сверяется с xlsx. Ручная
+    точка `ischium_bottom` — разметка команды, в ней есть как минимум одна
+    ошибка (точка на шейке бедра, …9759504, CR000000), она попадает в хвост.
     """
-    d = df2.dropna(subset=['T_px'])
-    out = {'current_constant_mm': D_TB_MM, 'n_frames': int(len(d))}
-    for col in ('B6', 'B7'):
-        if col not in d.columns:
-            continue
-        v = d[(d[col].notna()) & (d[col] < d.rows)]
-        dist = (v[col] - v.T_px).to_numpy() * MM_PER_PX
-        out[col] = {'n': int(len(v)),
-                    'median_mm': None if not len(v) else round(float(np.median(dist)), 1),
-                    'p10_mm': None if not len(v) else round(float(np.percentile(dist, 10)), 1),
-                    'p90_mm': None if not len(v) else round(float(np.percentile(dist, 90)), 1)}
-    both = d[(d.B6 < d.rows) & (d.B7 < d.rows)] if {'B6', 'B7'} <= set(d.columns) else d.iloc[:0]
-    if len(both):
-        spread = (both.B6 - both.B7).abs().to_numpy() * MM_PER_PX
-        out['B6_vs_B7_spread_mm'] = {'median': round(float(np.median(spread)), 1),
-                                     'p90': round(float(np.percentile(spread, 90)), 1)}
-    return out
+    if not MANUAL.exists():
+        return {'note': f'нет {MANUAL.name}: python -m hip_roi.ground_truth'}
+    t = pd.read_csv(MANUAL, encoding='utf-8-sig')[['rel_path', 'I_y', 'T_y']].dropna()
+    d = df2.merge(t, on='rel_path').dropna(subset=['B_px'])
+    err = (d.B_px - d.I_y).to_numpy() * MM_PER_PX
+    dist = (d.I_y - d.T_y).to_numpy() * MM_PER_PX
+    return {
+        'n': int(len(d)),
+        'error_median_mm': round(float(np.median(err)), 1),
+        'abs_error_median_mm': round(float(np.median(np.abs(err))), 1),
+        'abs_error_p90_mm': round(float(np.percentile(np.abs(err), 90)), 1),
+        'over_5mm': int((np.abs(err) > 5).sum()),
+        'over_10mm': [{'rel_path': r, 'error_mm': round(float(e), 1)}
+                      for r, e in zip(d.rel_path, err) if abs(e) > 10],
+        'manual_T_to_ischium_mm': {'median': round(float(np.median(dist)), 1),
+                                   'p1': round(float(np.percentile(dist, 1)), 1),
+                                   'p99': round(float(np.percentile(dist, 99)), 1),
+                                   'prior_used_mm': D_TI_MM},
+    }
 
 
 def sheet_for(df: pd.DataFrame, imgs: dict, method: str, sel: pd.DataFrame, path: Path, cols=4):
@@ -169,8 +172,9 @@ def main(argv=None):
               f"{c['ms_per_frame_median']:.0f} мс/кадр")
 
     if 'kit2' in results:
-        metrics['d_TB_calibration'] = calibrate_d_tb(results['kit2'])
-        print('калибровка d_TB (kit2):', metrics['d_TB_calibration'])
+        metrics['ischium_vs_manual'] = ischium_vs_manual(results['kit2'])
+        print('седалищная кость против ручных точек (kit2):',
+              {k: v for k, v in metrics['ischium_vs_manual'].items() if k != 'over_10mm'})
         d2 = results['kit2']
         buckets = pd.cut(d2.rows, [0, 210, 240, 270, 300, 330, 420])
         metrics['kit2_margins_by_rows'] = {

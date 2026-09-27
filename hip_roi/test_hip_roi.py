@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Тесты hip_roi. Запуск: python -m hip_roi.test_hip_roi  (или pytest).
 
-1. Синтетический фантом бедра с известными T/B/L — каждый комплект обязан
+1. Синтетический фантом бедра с известными T/B/L (B — нижняя точка седалищной
+   кости, низ ROI по рисунку 6 ТЗ) — каждый комплект обязан
    попасть в допуск; тот же фантом с тесным верхом / низом / латералью —
    обязан дать нарушение именно по этому отступу.
 2. Реальные кадры (если данные на месте): детерминизм (два прогона побитово
@@ -43,15 +44,19 @@ def _band(shape, p0, p1, half):
     return d <= half
 
 
-def synthetic_hip(top_mm=45.0, bottom_mm=50.0, lat_mm=35.0, d_tb_mm=50.0, W=280, side='rh'):
+def synthetic_hip(top_mm=45.0, bottom_mm=50.0, lat_mm=35.0, d_tb_mm=50.0, d_ti_mm=69.0,
+                  W=280, side='rh'):
     """Фантом: латераль слева. Возвращает (uint8 кадр, ожидаемые T, B, L в px).
 
-    Анатомия фиксирована (верхушка вертела -> низ малого вертела = d_tb_mm),
-    отступы задаются положением краёв кадра: H = top + d_tb + bottom.
+    Анатомия фиксирована: верхушка вертела -> низ малого вертела = d_tb_mm,
+    верхушка вертела -> нижняя точка седалищной кости = d_ti_mm. Низ ROI (B) —
+    седалищная кость, как на рисунке 6 ТЗ. Отступы задаются положением краёв
+    кадра: H = top + d_ti + bottom.
     """
     m = mm2px
     T, L = m(top_mm), m(lat_mm)
-    B = T + m(d_tb_mm)
+    Bt = T + m(d_tb_mm)                       # низ малого вертела
+    B = T + m(d_ti_mm)                        # нижняя точка седалищной кости
     H = B + m(bottom_mm)
     shape = (H, W)
     bone = np.zeros(shape, bool)
@@ -60,17 +65,17 @@ def synthetic_hip(top_mm=45.0, bottom_mm=50.0, lat_mm=35.0, d_tb_mm=50.0, W=280,
     # межвертельная зона: медиальный контур сужается по прямой от L+60 мм на
     # уровне T+30 мм до края диафиза на уровне B (~3.5 мм/см, как в жизни)
     yy, xx = np.mgrid[0:H, 0:W]
-    y0, y1 = T + m(30), B
+    y0, y1 = T + m(30), Bt
     x_med = L + m(60) + (xx * 0 + yy - y0) * (shaft_x1 - (L + m(60))) / max(y1 - y0, 1)
     bone |= (yy >= y0) & (yy <= y1) & (xx >= shaft_x0) & (xx <= x_med)
     bone |= _disc(shape, T + m(22), L + m(15), m(22), m(15))                    # большой вертел
     bone |= _band(shape, (T + m(35), L + m(25)), (T + m(10), L + m(70)), m(12))  # шейка
     bone |= _disc(shape, T + m(5), L + m(78), m(22), m(22))                      # головка
-    bone |= _disc(shape, B - m(9), shaft_x1, m(9), m(7))                         # малый вертел
+    bone |= _disc(shape, Bt - m(9), shaft_x1, m(9), m(7))                        # малый вертел
     pelvis = np.zeros(shape, bool)
     pelvis[:T + m(15), L + m(85):] = True
     pelvis |= _disc(shape, T - m(10), L + m(95), m(30), m(30))                   # вертлужная впадина
-    pelvis |= _disc(shape, B - m(20), L + m(85), m(12), m(12))                   # седалищная кость (с зазором от бедра)
+    pelvis |= _band(shape, (T + m(15), L + m(90)), (B - m(8), L + m(85)), m(8))   # седалищная кость (с зазором от бедра)
     img = np.zeros(shape, np.uint8)
     img[pelvis] = 150
     img[bone] = 160
@@ -103,12 +108,12 @@ def test_synthetic_landmarks():
         img, T, B, L = synthetic_hip(side=side)
         H, W = img.shape
         r1 = measure_roi_margins(img, side, 'kit1')
-        _check(f'kit1/{side}', r1, T, B, L, (0.0, 12.0), 12.0, 1.5, H, W, side)   # T1 ниже верхушки
+        _check(f'kit1/{side}', r1, T, B, L, (0.0, 12.0), 3.0, 1.5, H, W, side)    # T1 ниже верхушки
         r2 = measure_roi_margins(img, side, 'kit2')
-        # низ у kit2 — анатомический якорь с поправкой, его точность ±1.5 см
-        _check(f'kit2/{side}', r2, T, B, L, (2.0, 2.0), 15.0, 1.5, H, W, side)
+        # низ — край кончика седалищной кости, размытый так же, как на кадрах
+        _check(f'kit2/{side}', r2, T, B, L, (2.0, 2.0), 3.0, 1.5, H, W, side)
         r3 = measure_roi_margins(img, side, 'kit3')
-        _check(f'kit3/{side}', r3, T, B, L, (3.0, 3.0), 10.0, 1.5, H, W, side)
+        _check(f'kit3/{side}', r3, T, B, L, (3.0, 3.0), 3.0, 1.5, H, W, side)
         for r in (r1, r2, r3):
             assert r['roi_ok'] is True, (r['method'], r['violation_text'], r['flags'])
 
@@ -130,9 +135,9 @@ def test_synthetic_violations():
 
 
 def test_kit0_scan_length():
-    img, *_ = synthetic_hip(bottom_mm=8.0)          # 45 + 50 + 8 = 10.3 см < 11 см
+    img, *_ = synthetic_hip(bottom_mm=8.0)          # 45 + 69 + 8 = 12.2 см < 3 + 6.9 + 3
     assert measure_roi_margins(img, 'rh', 'kit0')['roi_ok'] is False
-    img, *_ = synthetic_hip()                       # 14.5 см
+    img, *_ = synthetic_hip()                       # 16.4 см
     assert measure_roi_margins(img, 'rh', 'kit0')['roi_ok'] is True
 
 
@@ -190,11 +195,9 @@ def test_real_symmetry():
 def test_real_short_frames_flagged():
     """Кадры, где эксперт увидел некорректный ROI из-за обрезанного низа.
 
-    Гарантия даётся на kit2: именно он измеряет верхушку вертела и ставит низ
-    ROI от неё. kit0 (длина кадра) после калибровки d_TB = 50 мм такие кадры
-    уже не ловит — 12.6 см длины формально хватает на 3 + 5 + 3 см; kit1 на
-    части из них стабилизируется выше малого вертела. Это ограничения обоих
-    комплектов, они описаны в README.
+    Гарантия даётся на kit2: основной комплект, низ ROI — нижняя точка
+    седалищной кости (рисунок 6 ТЗ). kit0 (длина кадра) и kit1 здесь не
+    проверяются: kit0 не видит анатомии, kit1 — базовый комплект.
     """
     frames = [f for f in _real_frames() if f[1].shape[0] <= 195]
     assert not _real_frames() or frames, 'в выборке должны быть короткие кадры'

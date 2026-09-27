@@ -2,10 +2,16 @@
 """Сборка вариантов алгоритма («комплекты») и единая точка входа.
 
     kit0 — без ориентиров: только длина сканирования H·s (контрольная точка)
-    kit1 — «Профили»:  L2 + T1 + низ по якорю (B1 — в диагностике)
-    kit2 — «Контур»:   L4 -> T3 -> низ по якорю T+d_TB с поправкой -> L3  (основной)
-    kit3 — «Бедро отдельно от таза»: водораздел -> ось диафиза -> T3/T5 -> низ по якорю
+    kit1 — «Профили»:  L2 + T1 + низ по седалищной кости (B1 — в диагностике)
+    kit2 — «Контур»:   L4 -> T3 -> низ по седалищной кости I1 -> L3  (основной)
+    kit3 — «Бедро отдельно от таза»: водораздел -> ось диафиза -> T3/T5 -> низ по I1
     custom — любая комбинация L*/T*/B* из landmarks.py
+
+Отступы — как на рисунке 6 ТЗ, от области интереса до границы поля
+сканирования (ответ организаторов, 27.09.2026): сверху — от верхушки большого
+вертела, сбоку — от наружного контура бедренной кости, снизу — от нижней точки
+седалищной кости. До этого ответа низ ROI ставился на уровне малого вертела
+(якорь T + 50 мм), в среднем на 20 мм выше седалищной кости.
 
 Все комплекты возвращают словарь одной формы (см. _result). Координаты в
 результате — в ИСХОДНОЙ ориентации кадра.
@@ -15,9 +21,9 @@ from __future__ import annotations
 import numpy as np
 
 from . import landmarks as lm
-from .geometry import (BOTTOM_MM, D_TB_BAND_MM, D_TB_MM, LAT_MM, MM_PER_PX,
-                       TOP_MM, bone_mask, detect_dual_femur, mm2px, px2mm,
-                       to_lateral_left, to_uint8, x_to_original)
+from .geometry import (BOTTOM_MM, D_TB_MM, D_TI_MM, D_TI_RANGE_MM, LAT_MM,
+                       MM_PER_PX, TOP_MM, bone_mask, detect_dual_femur, mm2px,
+                       px2mm, to_lateral_left, to_uint8, x_to_original)
 from .separate import Rotation, separate_femur, shaft_axis
 
 METHODS = ('kit0', 'kit1', 'kit2', 'kit3', 'custom')
@@ -91,31 +97,33 @@ def _prepare(img, side):
     return norm, mask, flags
 
 
-def _anchored_B(norm, mask, T, h, flags, diag):
-    """Низ ROI: анатомический якорь T + d_TB, поправленный измерением по кадру.
+def _ischium_B(img, side, norm, mask, T, h, flags, diag):
+    """Низ ROI по рисунку 6 ТЗ: нижняя точка седалищной кости (landmarks.I1).
 
-    Якорь — потому что ни одно правило по силуэту не находит уровень малого
-    вертела устойчиво: B1 (стабилизация ширины) смещён вниз на 2-4 см, B7
-    (локальная прямая по медиальному контуру) — вверх; измерения расходятся
-    между собой на 2-3 см. Медиана трёх оценок (B6 по тону, B7 по контуру и
-    сам якорь) зажимается в полосу якорь ± D_TB_BAND_MM: кадр может сдвинуть
-    границу в пределах анатомического разброса, но не увести её на сантиметры.
+    Кандидат принимается, только если лежит на анатомически возможном
+    расстоянии от верхушки вертела (D_TI_RANGE_MM; по ручной разметке 52–83 мм).
+    Иначе — повтор по строгой маске: на полутоновых кадрах слабый порог
+    сливает кость с мягкими тканями, и «кончик» уходит по их границе вниз. Если
+    не помог и он — анатомический запас T + D_TI_MM с флагом: вердикт по низу
+    на таком кадре читать как «не уверены».
+
+    Отступ меряется до нижнего края кадра, а не до незасканированного выреза в
+    углу поля: на рисунке 6 нижняя стрелка идёт мимо выреза до края поля.
     """
-    anchor = int(T) + mm2px(D_TB_MM)
-    b6, i6 = lm.B6_trochanteric_mass_end(norm, mask, T)
-    b7, i7 = lm.B7_medial_local_deviation(norm, mask, T)
-    cand = [anchor] + [b for b in (b6, b7) if b < h]
-    B = int(np.median(cand)) if len(cand) > 1 else anchor
-    band = mm2px(D_TB_BAND_MM)
-    if B < anchor - band or B > anchor + band:
-        flags.append('B:clamped_to_anchor')
-        B = int(np.clip(B, anchor - band, anchor + band))
-    if b6 < h and b7 < h and abs(b6 - b7) > mm2px(20.0):
-        flags.append('B:estimates_disagree')
-    if b6 >= h and b7 >= h:
-        flags.append('B:anchor_only')
-    diag.update(B6=i6, B7=i7, B_candidates={'anchor': anchor, 'B6': b6, 'B7': b7})
-    return min(B, h)
+    lo, hi = D_TI_RANGE_MM
+    tried = []
+    for strict in (False, True):
+        m = to_lateral_left(bone_mask(img, weak_frac=1.0), side) if strict else mask
+        y, info = lm.I1_ischium_bottom(norm, m, T)
+        tried.append({'strict': strict, 'y': y, **info})
+        if y is not None and lo <= px2mm(y - T) <= hi:
+            if strict:
+                flags.append('I:strict_mask')
+            diag['I'] = tried
+            return min(int(y), h)
+    flags.append('I:anatomical_prior')
+    diag['I'] = tried
+    return min(int(T) + mm2px(D_TI_MM), h)
 
 
 SHAFT_MM_RANGE = (20.0, 48.0)      # физически возможная ширина диафиза бедра
@@ -178,10 +186,11 @@ def _finish_B(T, B1, B2, h, flags, diag, agree_mm=10.0):
 # --------------------------------------------------------------------------- #
 def kit0(img, side):
     """Минимальная длина кадра, при которой критерий вообще выполним:
-    TOP + d_TB + BOTTOM. Ни верх, ни латераль не проверяет."""
+    TOP + d_TI + BOTTOM (d_TI — медиана расстояния «верхушка вертела ->
+    седалищная кость»). Ни верх, ни латераль не проверяет."""
     h, w = np.asarray(img).shape
     length = px2mm(h)
-    min_len = TOP_MM + D_TB_MM + BOTTOM_MM
+    min_len = TOP_MM + D_TI_MM + BOTTOM_MM
     ok = bool(length >= min_len)
     return {
         'method': 'kit0', 'side': side, 'H': int(h), 'W': int(w), 'scale_mm_per_px': MM_PER_PX,
@@ -208,10 +217,9 @@ def kit1(img, side):
     T, iT = lm.T1_wide_part(mask, L, iL['yL'])
     flags += iT['flags']
     B1, iB1 = lm.B1_width_stabilisation(mask, T)     # оставлен для сравнения
-    B = _anchored_B(norm, mask, T, h, flags, diag)
+    B = _ischium_B(img, side, norm, mask, T, h, flags, diag)
     _check_shaft_plausible(norm, mask, flags, diag)
     diag.update(L=iL, T=iT, B1=iB1)
-    diag['B_candidates']['B1'] = B1
     return _result('kit1', side, mask.shape, T, B, L, iT['apex'], flags, diag)
 
 
@@ -238,7 +246,7 @@ def kit2(img, side):
             norm = norm
     if T is None:
         return _result('kit2', side, mask.shape, None, None, L, None, flags, diag)
-    B = _anchored_B(norm, mask, T, h, flags, diag)
+    B = _ischium_B(img, side, norm, mask, T, h, flags, diag)
     L3, iL3 = lm.L3_in_range(mask, T, B)
     if L3 is not None:
         L = L3
@@ -301,13 +309,12 @@ def kit3(img, side):
     # обратно в исходную систему координат
     apex = rot.point_to_orig(*iTr['apex'])
     T = min(max(apex[0], 0), h - 1)
-    B = _anchored_B(norm, mask, T, h, flags, diag)
+    B = _ischium_B(img, side, norm, mask, T, h, flags, diag)
     ys, xs = np.nonzero(femur)
     sel = (ys >= T) & (ys <= min(B, h - 1))
     L = int(xs[sel].min()) if sel.any() else int(xs.min())
     _check_shaft_plausible(norm, mask, flags, diag)
-    diag.update(L=iLr, T=iTr, T5=iT5, B3=iBr, rot_shape=Fr.shape)
-    diag['B_candidates']['B3_rotated'] = Br
+    diag.update(L=iLr, T=iTr, T5=iT5, B3=iBr, B3_rotated=Br, rot_shape=Fr.shape)
     return _result('kit3', side, mask.shape, T, B, L, (T, apex[1]), flags, diag)
 
 

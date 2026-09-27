@@ -8,17 +8,19 @@
 Ориентиры:
     L — столбец самой латеральной точки бедра          (L1, L2, L3)
     T — строка верхушки большого вертела               (T1, T2, T3, T5)
-    B — низ ROI, конец вертельной массы                (B1, B2, B3, B4, B5)
+    I — нижняя точка седалищной кости: низ ROI по рисунку 6 ТЗ (I1)
+    B — уровень малого вертела, конец вертельной массы  (B1–B7; низом ROI
+        был до ответа организаторов 27.09.2026, теперь только диагностика)
 """
 from __future__ import annotations
 
 import numpy as np
 from scipy import ndimage as ndi
 
-from .geometry import (D_TB_MM, EIGHT, component_containing, lateral_profile,
-                       medial_profile, mm2px, moving_average, px2mm,
-                       top_profile, trace_contour, unscanned_region,
-                       width_profile)
+from .geometry import (D_TB_MM, EIGHT, ISCHIUM_EDGE_FRAC, bone_runs,
+                       component_containing, lateral_profile, medial_profile,
+                       mm2px, moving_average, px2mm, top_profile, trace_contour,
+                       unscanned_region, width_profile)
 
 
 def _profiles(mask: np.ndarray):
@@ -588,6 +590,82 @@ def B7_medial_local_deviation(img: np.ndarray, mask: np.ndarray, T: int, dev_mm:
 def B4_anatomical_offset(T: int, d_tb_mm: float = D_TB_MM):
     """B4. Запасное правило: B = T + d_TB (калиброванная анатомическая константа)."""
     return int(T) + mm2px(d_tb_mm), {'flags': ['B:fallback_anatomical']}
+
+
+# =========================================================================== #
+#  I — нижняя точка седалищной кости (низ ROI по рисунку 6 ТЗ)
+# =========================================================================== #
+def femur_run_track(mask: np.ndarray) -> dict[int, tuple[int, int]]:
+    """Отрезок бедра в каждой строке, снизу вверх, пока бедро не слилось с тазом.
+
+    Старт — самый широкий отрезок нижней строки с костью (диафиз); выше
+    берётся отрезок, перекрывающий предыдущий. Как только перекрытия нет, бедро
+    дальше не прослеживается: выше оно сливается с тазом в проекции.
+    """
+    h = mask.shape[0]
+    track: dict[int, tuple[int, int]] = {}
+    prev = None
+    for y in range(h - 1, -1, -1):
+        runs = bone_runs(mask[y])
+        if not runs:
+            if prev is not None:
+                break
+            continue
+        if prev is None:
+            r = max(runs, key=lambda r: r[1] - r[0])
+        else:
+            ov = [r for r in runs if r[0] < prev[1] and r[1] > prev[0]]
+            if not ov:
+                break
+            mid = (prev[0] + prev[1]) / 2
+            r = min(ov, key=lambda r: abs((r[0] + r[1]) / 2 - mid))
+        track[y] = r
+        prev = r
+    return track
+
+
+def I1_ischium_bottom(norm: np.ndarray, mask: np.ndarray, T: int,
+                      edge_frac: float = ISCHIUM_EDGE_FRAC):
+    """I1. Нижняя точка седалищной кости: низ ROI по рисунку 6 ТЗ.
+
+    Седалищная кость лежит медиальнее бедра (в нормализованной ориентации —
+    правее) и ниже вертлужной впадины. Идём снизу вверх до верхушки вертела и
+    берём первую строку, где медиальнее отрезка бедра есть отдельный отрезок
+    кости с зазором: это кончик седалищной кости.
+
+    Кончик бледный, и маска обрывается выше видимого края, поэтому от нижней
+    строки маски спускаемся по кадру, пока самый яркий пиксель под кончиком
+    выше уровня edge_frac между тоном кости и фоном (не дальше 10 мм).
+    """
+    h = mask.shape[0]
+    track = femur_run_track(mask)
+    found = None
+    for y in range(h - 1, int(T), -1):
+        if y not in track:
+            continue
+        femur_stop = track[y][1]
+        for r in bone_runs(mask[y]):
+            if r[0] > femur_stop and r[1] - r[0] >= 2:
+                found = (y, r)
+                break
+        if found:
+            break
+    if found is None:
+        return None, {'flags': ['I:not_found']}
+
+    y_mask, (x0, x1) = found
+    y = y_mask
+    top = max(0, y_mask - mm2px(4))
+    bone = norm[top:y_mask + 1, x0:x1][mask[top:y_mask + 1, x0:x1]]
+    below = norm[y_mask + 1:min(h, y_mask + 1 + mm2px(8)), x0:x1]
+    if bone.size and below.size:
+        bone_lvl = float(np.median(bone))
+        bg = float(np.percentile(below, 10))
+        thr = bg + edge_frac * (bone_lvl - bg)
+        while y + 1 < h and norm[y + 1, x0:x1].max() > thr and y - y_mask < mm2px(10):
+            y += 1
+    return int(y), {'flags': [], 'y_mask': int(y_mask), 'x': int((x0 + x1 - 1) // 2),
+                    'refined_mm': round(px2mm(y - y_mask), 1)}
 
 
 # =========================================================================== #
