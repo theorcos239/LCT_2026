@@ -10,8 +10,12 @@
 ```bash
 ./build.sh                                   # собрать контейнер
 ./run.sh batch /путь/к/исследованиям         # отчёт в ./out/report.xlsx
-./run.sh                                     # API на localhost:8000
+./run.sh                                     # веб-интерфейс и API на localhost:8000
 ```
+
+Веб-интерфейс — `http://localhost:8000/`: перетащить папку или zip, листать
+кадры со снимком, измерениями и нормами, отмечать согласие с вердиктом.
+Описание — [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
 
 Без контейнера:
 
@@ -301,6 +305,7 @@ PACS покажет заключение в том же исследовании
 ## API
 
 ```
+GET  /                       веб-интерфейс
 GET  /health                 жив ли сервис, загружены ли модели
 GET  /version                версии, пороги, коридоры
 GET  /taxonomy               перечень типов нарушений
@@ -313,6 +318,7 @@ GET  /jobs/{id}/report       таблица .xlsx или .csv
 GET  /jobs/{id}/details      все измерения в JSON
 GET  /jobs/{id}/overlays     zip с визуализацией
 GET  /jobs/{id}/sr           zip с DICOM SR
+GET  /jobs/{id}/overlays/{uid}.png   визуализация одного кадра (для интерфейса)
 ```
 
 Интерактивная документация — `/docs`.

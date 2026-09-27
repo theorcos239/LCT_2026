@@ -1,253 +1,883 @@
 <!doctype html>
+<html lang="ru">
 <meta charset="utf-8">
-<title>Контроль качества денситометрии</title>
+<title>Контроль качества DXA</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="icon" href="data:,">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect x='5' y='1' width='6' height='14' rx='2' fill='%234493f8'/></svg>">
 <style>
   :root {
-    --bg: #12151a; --panel: #1a1e26; --line: #2a303b; --text: #e6e9ef;
-    --dim: #8b93a3; --ok: #3fb950; --bad: #f85149; --accent: #4493f8;
+    --bg: #0f1216; --panel: #171b22; --panel2: #1e232c; --line: #2a303b; --text: #e6e9ef;
+    --dim: #8b93a3; --ok: #3fb950; --bad: #f85149; --warn: #d29922; --accent: #4493f8;
+    --ok-bg: #3fb95020; --bad-bg: #f8514920; --warn-bg: #d2992220; --acc-bg: #4493f820;
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
   body { margin: 0; background: var(--bg); color: var(--text);
-         font: 14px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif; }
-  header { padding: 14px 20px; border-bottom: 1px solid var(--line);
-           display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
-  h1 { font-size: 16px; margin: 0; font-weight: 600; }
+         font: 14px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif; }
+  a { color: var(--accent); }
+  kbd { font: 11px ui-monospace, Consolas, monospace; padding: 1px 5px; border: 1px solid var(--line);
+        border-bottom-width: 2px; border-radius: 4px; background: var(--panel2); color: var(--text); }
   .dim { color: var(--dim); }
-  main { display: grid; grid-template-columns: minmax(420px, 1fr) minmax(320px, 420px);
-         gap: 16px; padding: 16px 20px; align-items: start; }
-  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
-  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+  .small { font-size: 12px; }
+  .mono { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+
+  header { display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+           padding: 10px 18px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header .spacer { flex: 1; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--dim); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); }
+  .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); }
+
+  button, .btn { background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+                 border-radius: 6px; padding: 6px 12px; font: inherit; cursor: pointer;
+                 text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
+  button:hover:not(:disabled), .btn:hover { border-color: var(--accent); }
+  button:disabled, .btn.disabled { opacity: .4; cursor: default; pointer-events: none; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.ghost { background: none; }
+  input[type=search], select, textarea {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 6px; padding: 6px 9px; font: inherit; }
+  input[type=search]:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  main { display: grid; grid-template-columns: minmax(440px, 1fr) minmax(360px, 460px);
+         gap: 14px; padding: 14px 18px; align-items: start; }
+  @media (max-width: 980px) { main { grid-template-columns: 1fr; } #side { position: static; max-height: none; } }
+  /* колонки grid не растягиваются по ширине таблицы: таблица прокручивается внутри своей рамки */
+  main > * { min-width: 0; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
   .pad { padding: 14px 16px; }
-
-  #drop { border: 2px dashed var(--line); border-radius: 8px; padding: 28px 16px;
-          text-align: center; cursor: pointer; transition: .15s; }
-  #drop.over { border-color: var(--accent); background: #4493f814; }
-  #drop input { display: none; }
-
-  button { background: #222834; color: var(--text); border: 1px solid var(--line);
-           border-radius: 6px; padding: 6px 12px; font: inherit; cursor: pointer; }
-  button:hover:not(:disabled) { border-color: var(--accent); }
-  button:disabled { opacity: .45; cursor: default; }
-  a.btn { text-decoration: none; display: inline-block; }
-
-  progress { width: 100%; height: 6px; }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line);
-           white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  th { color: var(--dim); font-weight: 500; position: sticky; top: 0; background: var(--panel); }
-  tbody tr { cursor: pointer; }
-  tbody tr:hover { background: #ffffff0a; }
-  tbody tr.sel { background: #4493f822; }
-  .wrap { max-height: 60vh; overflow: auto; }
-
-  .tag { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 12px; }
-  .tag.ok { background: #3fb95022; color: var(--ok); }
-  .tag.bad { background: #f8514922; color: var(--bad); }
-  .tag.err { background: #8b93a322; color: var(--dim); }
-
-  #shot { width: 100%; border-radius: 6px; background: #000; display: block; }
-  dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 10px 0 0; }
-  dt { color: var(--dim); } dd { margin: 0; }
-  .flags { color: var(--dim); font-size: 12px; margin-top: 10px; word-break: break-all; }
   .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-  select { background: #222834; color: var(--text); border: 1px solid var(--line);
-           border-radius: 6px; padding: 5px 8px; font: inherit; }
+
+  #drop { border: 2px dashed var(--line); border-radius: 10px; padding: 22px 16px; text-align: center; transition: .15s; }
+  #drop.over { border-color: var(--accent); background: var(--acc-bg); }
+  #drop b { font-size: 15px; }
+  #drop .row { justify-content: center; margin-top: 10px; }
+  .compact #drop { padding: 10px 14px; text-align: left; display: flex; align-items: center; gap: 12px; }
+  .compact #drop .row { margin: 0; margin-left: auto; }
+  .compact #drop .hint2 { display: none; }
+
+  #recent { margin-top: 12px; }
+  #recent h3, .h3 { font-size: 12px; font-weight: 600; color: var(--dim); text-transform: uppercase;
+                    letter-spacing: .04em; margin: 0 0 6px; }
+  .job { display: flex; gap: 10px; align-items: center; padding: 7px 10px; border: 1px solid var(--line);
+         border-radius: 8px; margin-bottom: 6px; cursor: pointer; }
+  .job:hover { border-color: var(--accent); }
+
+  #run { margin-top: 12px; }
+  progress { width: 100%; height: 6px; accent-color: var(--accent); }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 8px; margin-top: 12px; }
+  .tile { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; cursor: pointer; }
+  .tile b { display: block; font-size: 20px; font-weight: 600; }
+  .tile span { font-size: 12px; color: var(--dim); }
+  .tile.on { border-color: var(--accent); background: var(--acc-bg); }
+  .tile.ok b { color: var(--ok); } .tile.bad b { color: var(--bad); } .tile.warn b { color: var(--warn); }
+
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+  .chip { border: 1px solid var(--line); border-radius: 14px; padding: 2px 10px; font-size: 12px;
+          cursor: pointer; background: var(--panel2); user-select: none; }
+  .chip.on { border-color: var(--bad); background: var(--bad-bg); }
+  .chip b { font-weight: 600; margin-left: 4px; }
+
+  #tools { margin-top: 12px; }
+  #tools input[type=search] { flex: 1; min-width: 160px; }
+  #downloads { margin-top: 10px; }
+
+  .wrap { margin-top: 10px; max-height: calc(100vh - 360px); min-height: 200px; overflow: auto;
+          border: 1px solid var(--line); border-radius: 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  td.viol { white-space: normal; }
+  th { color: var(--dim); font-weight: 500; position: sticky; top: 0; background: var(--panel); z-index: 1; }
+  tr.grp td { background: var(--panel2); font-size: 12px; color: var(--dim); padding: 5px 8px; white-space: normal; }
+  tr.grp .mono { word-break: break-all; }
+  tr.grp td b { color: var(--text); font-weight: 600; }
+  tr.fr { cursor: pointer; }
+  tr.fr:hover { background: #ffffff08; }
+  tr.fr.sel { background: var(--acc-bg); box-shadow: inset 3px 0 0 var(--accent); }
+  .tag { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; }
+  .tag.ok { background: var(--ok-bg); color: var(--ok); }
+  .tag.bad { background: var(--bad-bg); color: var(--bad); }
+  .tag.warn { background: var(--warn-bg); color: var(--warn); }
+  .tag.err { background: #8b93a322; color: var(--dim); }
+  .rv { font-size: 13px; }
+  .rv.agree { color: var(--ok); } .rv.disagree { color: var(--warn); }
+  .empty { padding: 18px; text-align: center; color: var(--dim); }
+
+  #side { position: sticky; top: 14px; max-height: calc(100vh - 28px); overflow: auto; }
+  #nav { display: flex; align-items: center; gap: 8px; }
+  #nav .pos { flex: 1; text-align: center; font-size: 12px; color: var(--dim); }
+  .verdict { margin-top: 10px; padding: 10px 12px; border-radius: 8px; font-weight: 600; }
+  .verdict.ok { background: var(--ok-bg); color: var(--ok); }
+  .verdict.bad { background: var(--bad-bg); color: var(--bad); }
+  .verdict.warn { background: var(--warn-bg); color: var(--warn); }
+  .verdict.err { background: #8b93a322; color: var(--dim); }
+  .verdict small { display: block; font-weight: 400; color: var(--text); margin-top: 2px; }
+  .shotbox { position: relative; margin-top: 10px; background: #000; border-radius: 8px; min-height: 120px;
+             display: flex; align-items: center; justify-content: center; cursor: zoom-in; overflow: hidden; }
+  .shotbox img { width: 100%; display: block; }
+  .shotbox .msg { color: var(--dim); font-size: 12px; padding: 30px; }
+  .legend { font-size: 11px; color: var(--dim); margin-top: 6px; }
+  .legend i { display: inline-block; width: 10px; height: 3px; vertical-align: middle; margin: 0 3px 0 8px; }
+
+  .crit { margin-top: 12px; }
+  .c { display: grid; grid-template-columns: 22px 1fr auto; gap: 2px 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .c:last-child { border-bottom: 0; }
+  .c .ic { font-weight: 700; text-align: center; }
+  .c .ic.ok { color: var(--ok); } .c .ic.bad { color: var(--bad); } .c .ic.warn { color: var(--warn); } .c .ic.na { color: var(--dim); }
+  .c .name { font-weight: 500; }
+  .c .val { text-align: right; font-variant-numeric: tabular-nums; }
+  .c .note { grid-column: 2 / 4; font-size: 12px; color: var(--dim); }
+  .bar { grid-column: 2 / 4; position: relative; height: 6px; background: var(--panel2); border-radius: 3px; margin-top: 3px; }
+  .bar .zone { position: absolute; top: 0; bottom: 0; background: var(--ok-bg); border-left: 1px solid var(--ok); border-right: 1px solid var(--ok); }
+  .bar .mk { position: absolute; top: -3px; width: 3px; height: 12px; border-radius: 2px; background: var(--text); }
+
+  .flags { margin-top: 10px; }
+  .flag { font-size: 12px; padding: 5px 8px; border-left: 3px solid var(--warn); background: var(--warn-bg);
+          border-radius: 4px; margin-bottom: 5px; }
+  .flag code { color: var(--dim); font-size: 11px; }
+
+  .review { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+  .review .row button { flex: 1; justify-content: center; }
+  .review button.on.agree { background: var(--ok-bg); border-color: var(--ok); color: var(--ok); }
+  .review button.on.disagree { background: var(--warn-bg); border-color: var(--warn); color: var(--warn); }
+  .review textarea { width: 100%; margin-top: 8px; min-height: 52px; resize: vertical; }
+  dl.meta { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 12px 0 0; font-size: 12px; }
+  dl.meta dt { color: var(--dim); } dl.meta dd { margin: 0; word-break: break-all; }
+
+  #lightbox { position: fixed; inset: 0; background: #000d; z-index: 50; display: flex;
+              align-items: center; justify-content: center; overflow: hidden; cursor: grab; }
+  #lightbox img { max-width: 96vw; max-height: 92vh; transform-origin: 0 0; user-select: none; -webkit-user-drag: none; }
+  #lightbox .cap { position: fixed; left: 0; right: 0; bottom: 10px; text-align: center; color: #ddd; font-size: 12px; }
+  .modal { position: fixed; inset: 0; background: #000a; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 16px; }
+  .modal .panel { max-width: 640px; width: 100%; max-height: 90vh; overflow: auto; }
+  .modal table td { white-space: normal; border: 0; padding: 3px 8px; }
+  #toasts { position: fixed; right: 16px; bottom: 16px; z-index: 70; display: flex; flex-direction: column; gap: 8px; }
+  .toast { background: var(--panel2); border: 1px solid var(--line); border-left: 4px solid var(--accent);
+           border-radius: 8px; padding: 10px 14px; max-width: 420px; box-shadow: 0 6px 24px #0008; }
+  .toast.bad { border-left-color: var(--bad); }
+  .toast.ok { border-left-color: var(--ok); }
 </style>
 
 <header>
   <h1>Контроль качества денситометрии</h1>
-  <span class="dim" id="health">проверяю сервис…</span>
+  <span class="pill"><span class="dot" id="hdot"></span><span id="health">проверяю сервис…</span></span>
+  <span class="spacer"></span>
+  <a class="btn ghost" href="/docs" target="_blank" rel="noopener">API</a>
+  <button class="ghost" id="helpBtn" title="Справка и горячие клавиши (?)">Справка <kbd>?</kbd></button>
 </header>
 
 <main>
-  <section class="panel pad">
-    <div id="drop">
-      <b>Перетащите zip с исследованиями</b><br>
-      <span class="dim">или нажмите, чтобы выбрать файл. Можно один .dcm</span>
-      <input id="file" type="file" accept=".zip,.dcm,application/zip">
+  <section class="panel pad" id="left">
+    <div id="drop" tabindex="0" aria-label="Загрузка исследований">
+      <div><b>Перетащите сюда папку, zip или DICOM-файлы</b>
+        <div class="dim small hint2">Папка с исследованиями, одно исследование, архив или отдельные снимки — структура подпапок не важна</div></div>
+      <div class="row">
+        <button class="primary" id="pickFolder">Выбрать папку</button>
+        <button id="pickFiles">Выбрать файлы</button>
+      </div>
+      <input id="folderInput" type="file" webkitdirectory directory multiple hidden>
+      <input id="fileInput" type="file" multiple hidden accept=".zip,.dcm,.dicom,application/dicom,application/zip,*/*">
     </div>
 
-    <div id="run" hidden style="margin-top:14px">
-      <div class="row"><b id="state">Обработка</b><span class="dim" id="progress"></span></div>
+    <div id="recent" hidden>
+      <div class="h3">Недавние задания</div>
+      <div id="recentList"></div>
+    </div>
+
+    <div id="run" hidden>
+      <div class="row"><b id="stage">Обработка</b><span class="dim small" id="stageInfo"></span></div>
       <progress id="bar" max="1" value="0"></progress>
-      <div class="dim" id="summary" style="margin-top:6px"></div>
     </div>
 
-    <div id="tools" hidden style="margin-top:14px" class="row">
-      <select id="filter">
-        <option value="">все кадры</option>
-        <option value="bad">только с нарушением</option>
-        <option value="ok">только качественные</option>
-        <option value="spine">позвоночник</option>
-        <option value="hip">бедро</option>
-        <option value="fail">ошибки обработки</option>
-      </select>
-      <a class="btn" id="dl-report"><button>Таблица</button></a>
-      <a class="btn" id="dl-details"><button>details.json</button></a>
-      <a class="btn" id="dl-overlays"><button>Оверлеи zip</button></a>
-    </div>
-
-    <div class="wrap" id="tablewrap" hidden style="margin-top:12px">
-      <table>
-        <thead><tr><th>Файл</th><th>Область</th><th>Класс</th><th>Нарушения</th></tr></thead>
-        <tbody id="rows"></tbody>
-      </table>
+    <div id="results" hidden>
+      <div class="tiles" id="tiles"></div>
+      <div class="chips" id="chips"></div>
+      <div class="row" id="tools">
+        <input type="search" id="q" placeholder="Поиск: файл, исследование, UID  ( / ,  Enter — к списку )">
+        <select id="region" title="Область">
+          <option value="">все области</option>
+          <option value="spine">позвоночник</option>
+          <option value="hip">бедро</option>
+        </select>
+        <select id="sort" title="Порядок">
+          <option value="study">по исследованиям</option>
+          <option value="bad">сначала нарушения</option>
+        </select>
+      </div>
+      <div class="row" id="downloads">
+        <span class="dim small">Скачать:</span>
+        <a class="btn" id="dlReport">Таблица .xlsx</a>
+        <a class="btn" id="dlDetails">Измерения .json</a>
+        <a class="btn" id="dlOverlays">Визуализация .zip</a>
+        <a class="btn" id="dlSr">DICOM SR .zip</a>
+        <button id="dlReview" title="Решения специалиста по кадрам">Мои отметки .csv</button>
+      </div>
+      <div class="wrap" id="tableWrap">
+        <table>
+          <thead><tr><th>Файл</th><th>Область</th><th>Вердикт</th><th>Нарушения</th><th title="Отметка специалиста">✓</th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
     </div>
   </section>
 
-  <section class="panel pad" id="side">
-    <div class="dim" id="hint">Выберите кадр в таблице — здесь появится визуализация и измерения.</div>
-    <img id="shot" hidden alt="визуализация кадра">
-    <dl id="facts"></dl>
-    <div class="flags" id="flags"></div>
-  </section>
+  <aside class="panel pad" id="side">
+    <div id="sideEmpty" class="dim">
+      <p style="margin-top:0"><b style="color:var(--text)">Как пользоваться</b></p>
+      <ol style="padding-left:18px; margin:0 0 8px">
+        <li>Перетащите папку с исследованиями или zip слева.</li>
+        <li>Выберите кадр в таблице — здесь появятся снимок с разметкой и измерения.</li>
+        <li>Отметьте, согласны ли вы с вердиктом (<kbd>A</kbd> / <kbd>D</kbd>), и листайте <kbd>J</kbd> / <kbd>K</kbd>.</li>
+      </ol>
+      <p class="small">Всё считается на этом сервере, снимки никуда не отправляются.</p>
+    </div>
+    <div id="card" hidden>
+      <div id="nav">
+        <button id="prev" title="Предыдущий кадр (K, ↑)">‹</button>
+        <span class="pos" id="pos"></span>
+        <button id="next" title="Следующий кадр (J, ↓)">›</button>
+      </div>
+      <div class="verdict" id="verdict"></div>
+      <div class="shotbox" id="shotbox" title="Увеличить (F)">
+        <img id="shot" alt="снимок с разметкой" hidden>
+        <div class="msg" id="shotMsg">загрузка…</div>
+      </div>
+      <div class="legend" id="legend"></div>
+      <div class="crit" id="crit"></div>
+      <div class="flags" id="flags"></div>
+      <div class="review">
+        <div class="h3">Решение специалиста</div>
+        <div class="row">
+          <button class="agree" id="agree" title="Согласен с вердиктом (A)">✓ Согласен <kbd>A</kbd></button>
+          <button class="disagree" id="disagree" title="Не согласен с вердиктом (D)">✗ Не согласен <kbd>D</kbd></button>
+        </div>
+        <textarea id="comment" placeholder="Комментарий (необязательно)"></textarea>
+      </div>
+      <dl class="meta" id="meta"></dl>
+    </div>
+  </aside>
 </main>
 
+<div id="lightbox" hidden><img id="lbImg" alt=""><div class="cap" id="lbCap"></div></div>
+
+<div class="modal" id="help" hidden>
+  <div class="panel pad">
+    <div class="row"><b style="font-size:15px">Справка</b><span class="spacer" style="flex:1"></span><button id="helpClose">Закрыть <kbd>Esc</kbd></button></div>
+    <p>Сервис проверяет качество укладки и сканирования по критериям ТЗ: для позвоночника — укладку (видны ли гребни подвздошных костей), отклонение оси и посторонние предметы; для бедра — ротацию (выступ малого вертела) и отступы области интереса до края поля (3 см сверху от верхушки вертела, 3 см снизу от седалищной кости, 2 см сбоку от наружного контура бедра, как на рисунке 6 ТЗ).</p>
+    <p>Вердикт выносит измерение: в карточке кадра видно, что измерено, с какой нормой сравнивалось и насколько кадр близок к границе. Флаги — не нарушения, а подсказки «здесь измерение менее надёжно, посмотрите сами».</p>
+    <table>
+      <tr><td><kbd>J</kbd> <kbd>↓</kbd></td><td>следующий кадр</td></tr>
+      <tr><td><kbd>K</kbd> <kbd>↑</kbd></td><td>предыдущий кадр</td></tr>
+      <tr><td><kbd>A</kbd></td><td>согласен с вердиктом</td></tr>
+      <tr><td><kbd>D</kbd></td><td>не согласен с вердиктом</td></tr>
+      <tr><td><kbd>C</kbd></td><td>комментарий</td></tr>
+      <tr><td><kbd>F</kbd> <kbd>Enter</kbd></td><td>снимок на весь экран (колесо — масштаб, перетаскивание — сдвиг, двойной щелчок — сброс)</td></tr>
+      <tr><td><kbd>N</kbd></td><td>следующий кадр с нарушением</td></tr>
+      <tr><td><kbd>/</kbd></td><td>поиск; <kbd>Enter</kbd> или <kbd>Esc</kbd> — вернуться к списку</td></tr>
+      <tr><td><kbd>Esc</kbd></td><td>закрыть окно</td></tr>
+    </table>
+    <p class="small dim">Отметки специалиста хранятся в этом браузере отдельно для каждого задания и выгружаются кнопкой «Мои отметки .csv». Результаты заданий хранятся на сервере ограниченное время.</p>
+  </div>
+</div>
+
+<div id="toasts"></div>
+
 <script>
+'use strict';
 const $ = s => document.querySelector(s);
+const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmt = (v, d = 1) => (v === null || v === undefined || Number.isNaN(+v)) ? '—' : (+v).toFixed(d);
+
 const REGION = { spine: 'позвоночник', lh: 'левое бедро', rh: 'правое бедро', unknown: 'не определена' };
-let job = null, rows = [], selected = null;
+const SHORT = { spine_position: 'Укладка', spine_axis: 'Ось', spine_artifacts: 'Посторонние предметы',
+                hip_rotation: 'Ротация', hip_roi: 'Отступы ROI', undetermined: 'Область не определена' };
+const FLAGS = {
+  'axis:estimates_disagree': 'Две оценки угла оси (по центрам тел и по краям колонны) расходятся больше чем на 2° — проверьте угол по снимку.',
+  'axis:curved': 'Позвоночник изогнут (изгиб больше 12 мм): при сколиозе ось формально может быть вертикальной.',
+  'axis:column_not_found': 'Колонна позвоночника не найдена — угол не измерен.',
+  'axis:edges_not_found': 'Боковые края позвонков не найдены — вторая оценка угла недоступна.',
+  'axis:keypoints_vs_contour_disagree': 'Угол по модели точек и по контуру расходится больше чем на 2°.',
+  'position:estimates_disagree': 'Геометрия и вид кадра расходятся в оценке укладки.',
+  'position:iliac_missing_one_side': 'Гребень подвздошной кости не найден с одной стороны.',
+  'position:no_appearance_model': 'Модель вида кадра недоступна — укладка оценена только геометрией.',
+  'artifacts:estimates_disagree': 'Морфология и вид кадра расходятся в оценке посторонних предметов.',
+  'artifacts:no_appearance_model': 'Модель вида кадра недоступна — посторонние предметы оценены только морфологией.',
+  'rotation:estimates_disagree': 'Две оценки ротации расходятся.',
+  'rotation:no_contour': 'Медиальный контур диафиза не прослеживается — ротацию оценить нельзя.',
+  'rotation:no_anchor': 'Верхушка большого вертела не найдена — ротацию оценить нельзя.',
+  'rotation:neck_not_reached': 'Контур не дошёл до шейки бедра — выступ малого вертела мог быть недоизмерен.',
+  'rotation:short_window': 'Короткий участок диафиза для прямой — выступ измерен менее надёжно.',
+  'I:strict_mask': 'Седалищная кость найдена по строгой маске (полутоновый кадр, мягкие ткани яркие).',
+  'I:anatomical_prior': 'Седалищная кость не найдена — низ области интереса взят по анатомии (вертел + 69 мм). Нижний отступ проверьте по снимку.',
+  'measure:implausible_shaft': 'Ширина диафиза вне физических пределов — маска кости недостоверна, «норму» по отступам сервис не выдаёт.',
+  'mask:strict_fallback': 'Кость отделена от мягких тканей по строгому порогу (полутоновый кадр).',
+  'mask:suspect_wide_shaft': 'Мягкие ткани слились с костью в маске — нижний отступ не определён.',
+  'mask:empty': 'Кость на кадре не найдена.',
+  'T:at_top_edge': 'Верхушка большого вертела у самого верхнего края кадра.',
+  'T:fallback_T2': 'Верхушка вертела найдена запасным способом (контур без седловины).',
+  'L:no_bulge_fallback_L2': 'Выпуклость вертела не выражена — латеральный край взят по профилю бедра.',
+  'roi:keypoints_vs_contour_disagree': 'Отступы по модели точек и по контуру расходятся больше чем на 5 мм.',
+};
+const flagText = f => {
+  if (FLAGS[f]) return FLAGS[f];
+  if (f.startsWith('region:')) return `Кадр не принят фильтром области: ${f.slice(7)}. Нужен ручной разбор.`;
+  if (f.startsWith('keypoints:unavailable')) return 'Модель ключевых точек недоступна — кадр посчитан контурной геометрией.';
+  return null;
+};
 
-fetch('/health').then(r => r.json()).then(h => {
-  const models = Object.entries(h.models || {}).filter(([, v]) => v).map(([k]) => k);
-  $('#health').textContent = `сервис ${h.status || 'ok'} · модели: ${models.join(', ') || 'нет'}`;
-}).catch(() => $('#health').textContent = 'сервис недоступен');
+const S = {
+  job: null, rows: [], view: [], sel: -1, cfg: {}, names: SHORT,
+  f: { q: '', region: '', status: '', types: new Set(), sort: 'study' },
+  reviews: {},
+};
 
-// --- загрузка файла -------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Сеть
+async function api(url, opts) {
+  let r;
+  try { r = await fetch(url, opts); } catch (e) { throw new Error('Сервис недоступен: ' + e.message); }
+  const text = await r.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { /* не JSON */ }
+  if (!r.ok) throw new Error((data && (data.detail || data.error)) || text || `HTTP ${r.status}`);
+  return data;
+}
+
+function toast(msg, kind = '') {
+  const el = document.createElement('div');
+  el.className = 'toast ' + kind;
+  el.textContent = msg;
+  $('#toasts').append(el);
+  setTimeout(() => el.remove(), kind === 'bad' ? 9000 : 4000);
+}
+
+async function boot() {
+  try {
+    const h = await api('/health');
+    $('#hdot').className = 'dot ok';
+    $('#health').textContent = 'сервис работает';
+  } catch (e) { $('#hdot').className = 'dot bad'; $('#health').textContent = 'сервис недоступен'; }
+  try { S.cfg = await api('/version'); } catch { S.cfg = {}; }
+  try { const t = await api('/taxonomy'); S.full = t.violations || {}; } catch { S.full = {}; }
+  const m = location.hash.match(/job=([\w-]+)/);
+  if (m) openJob(m[1]); else loadRecent();
+}
+
+async function loadRecent() {
+  let jobs = [];
+  try { jobs = (await api('/jobs')).jobs || []; } catch { return; }
+  jobs = jobs.filter(j => j.state === 'done').slice(0, 6);
+  $('#recent').hidden = !jobs.length || !!S.job;
+  $('#recentList').innerHTML = jobs.map(j => {
+    const s = j.summary || {};
+    const when = new Date(j.created * 1000).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    return `<div class="job" data-id="${esc(j.id)}"><b>${esc(when)}</b>
+      <span class="dim small">исследований ${s.studies ?? '—'} · кадров ${s.images ?? '—'} · с нарушением ${s.with_violation ?? 0}${s.failure ? ' · сбоев ' + s.failure : ''}</span></div>`;
+  }).join('');
+}
+$('#recentList').onclick = e => { const el = e.target.closest('.job'); if (el) openJob(el.dataset.id); };
+
+// ---------------------------------------------------------------------------
+// Загрузка: папка, файлы, zip. Несколько файлов упаковываются в zip прямо здесь.
+const JUNK = /(^|\/)(\.DS_Store|Thumbs\.db|desktop\.ini)$|(^|\/)__MACOSX\//i;
+
+$('#pickFolder').onclick = () => $('#folderInput').click();
+$('#pickFiles').onclick = () => $('#fileInput').click();
+$('#folderInput').onchange = e => { collectFromInput(e.target.files); e.target.value = ''; };
+$('#fileInput').onchange = e => { collectFromInput(e.target.files); e.target.value = ''; };
 const drop = $('#drop');
-drop.onclick = () => $('#file').click();
-drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
-drop.ondragleave = () => drop.classList.remove('over');
-drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); send(e.dataTransfer.files[0]); };
-$('#file').onchange = e => send(e.target.files[0]);
+['dragenter', 'dragover'].forEach(t => document.addEventListener(t, e => { e.preventDefault(); drop.classList.add('over'); }));
+['dragleave', 'drop'].forEach(t => document.addEventListener(t, e => { if (t === 'dragleave' && e.relatedTarget) return; drop.classList.remove('over'); }));
+document.addEventListener('drop', async e => {
+  e.preventDefault();
+  const items = [...(e.dataTransfer.items || [])].map(i => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+  if (items.length) {
+    const out = [];
+    for (const en of items) await walk(en, out);
+    start(out);
+  } else collectFromInput(e.dataTransfer.files);
+});
 
-async function send(file) {
-  if (!file) return;
-  reset();
-  const body = new FormData();
-  body.append('file', file);
-  if (file.name.toLowerCase().endsWith('.dcm')) return single(body, file.name);
-
-  $('#run').hidden = false;
-  $('#state').textContent = 'Загрузка архива';
-  const r = await fetch('/batch?overlays=true&all_frames=true', { method: 'POST', body });
-  if (!r.ok) return fail(await r.text());
-  job = (await r.json()).id;
-  poll();
+function collectFromInput(list) {
+  start([...list].map(f => ({ path: f.webkitRelativePath || f.name, file: f })));
 }
 
-// Один DICOM: вердикт и картинка сразу, без задания.
-async function single(body, name) {
-  const r = await fetch('/analyze', { method: 'POST', body });
-  if (!r.ok) return fail(await r.text());
-  const res = await r.json();
-  rows = [{ file_name: name, ...res }];
-  render();
-  const img = await fetch('/analyze/overlay', { method: 'POST', body: cloneForm(body) });
-  show(rows[0], img.ok ? URL.createObjectURL(await img.blob()) : null);
-}
-function cloneForm(body) { const f = new FormData(); for (const [k, v] of body) f.append(k, v); return f; }
-
-// --- прогресс задания -----------------------------------------------------
-async function poll() {
-  const r = await fetch(`/jobs/${job}`);
-  const j = await r.json();
-  const [done, total] = (j.progress || '0/0').split('/').map(Number);
-  $('#bar').max = Math.max(total, 1); $('#bar').value = done;
-  $('#progress').textContent = `${done} / ${total || '?'}`;
-  $('#state').textContent = { queued: 'В очереди', running: 'Обработка',
-                              done: 'Готово', failed: 'Ошибка' }[j.state] || j.state;
-  if (j.state === 'failed') return fail(j.error);
-  if (j.state !== 'done') return setTimeout(poll, 500);
-
-  const s = j.summary || {};
-  $('#summary').textContent = `исследований ${s.studies ?? '—'}, кадров ${s.images ?? '—'}, `
-    + `с нарушением ${s.with_violation ?? 0}, ошибок ${s.failure ?? 0}, `
-    + `${s.seconds_per_image_median ?? '—'} с на кадр`;
-  for (const [id, path] of [['#dl-report', 'report'], ['#dl-details', 'details'],
-                            ['#dl-overlays', 'overlays']])
-    $(id).href = `/jobs/${job}/${path}`;
-  rows = await (await fetch(`/jobs/${job}/details`)).json();
-  render();
-}
-
-// --- таблица --------------------------------------------------------------
-$('#filter').onchange = render;
-
-function keep(r) {
-  const f = $('#filter').value, reg = r.anatomical_region;
-  if (f === 'bad') return r.quality_class === 1 && r.processing_status !== 'Failure';
-  if (f === 'ok') return r.quality_class === 0;
-  if (f === 'spine') return reg === 'spine';
-  if (f === 'hip') return reg === 'lh' || reg === 'rh';
-  if (f === 'fail') return r.processing_status === 'Failure';
-  return true;
-}
-
-function render() {
-  const tbody = $('#rows');
-  tbody.textContent = '';
-  const shown = rows.filter(keep);
-  for (const r of shown) {
-    const tr = document.createElement('tr');
-    const bad = r.processing_status === 'Failure' ? 'err' : r.quality_class ? 'bad' : 'ok';
-    const label = bad === 'err' ? 'сбой' : bad === 'bad' ? 'нарушение' : 'качественный';
-    tr.innerHTML = `<td>${esc(r.file_name || r.image_uid || '')}</td>`
-      + `<td>${REGION[r.anatomical_region] || r.anatomical_region || ''}</td>`
-      + `<td><span class="tag ${bad}">${label}</span></td>`
-      + `<td>${esc(r.violation_description || r.violation_type || '')}</td>`;
-    tr.onclick = () => show(r);
-    tbody.append(tr);
+async function walk(entry, out) {
+  if (entry.isFile) {
+    const f = await new Promise((res, rej) => entry.file(res, rej));
+    out.push({ path: entry.fullPath.replace(/^\//, ''), file: f });
+  } else if (entry.isDirectory) {
+    const reader = entry.createReader();
+    for (;;) {
+      const batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+      if (!batch.length) break;
+      for (const e of batch) await walk(e, out);
+    }
   }
-  $('#tools').hidden = !rows.length;
-  $('#tablewrap').hidden = !rows.length;
-  if (!shown.length && rows.length) tbody.innerHTML = '<tr><td colspan="4" class="dim">ничего не подходит под фильтр</td></tr>';
 }
 
-// --- карточка кадра -------------------------------------------------------
-function show(r, imgUrl) {
-  selected = r;
-  for (const tr of $('#rows').children) tr.classList.remove('sel');
-  const idx = rows.filter(keep).indexOf(r);
-  if (idx >= 0 && $('#rows').children[idx]) $('#rows').children[idx].classList.add('sel');
-
-  $('#hint').hidden = true;
-  const img = $('#shot');
-  const src = imgUrl || (job && r.image_uid ? `/jobs/${job}/overlays/${r.image_uid}.png` : null);
-  img.hidden = !src;
-  if (src) { img.src = src; img.onerror = () => { img.hidden = true; }; }
-  $('#facts').innerHTML = facts(r).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('');
-  $('#flags').textContent = r.flags ? `флаги: ${r.flags}` : '';
+async function start(entries) {
+  entries = entries.filter(e => !JUNK.test(e.path));
+  if (!entries.length) return toast('Не выбрано ни одного файла.', 'bad');
+  resetResults();
+  setStage('Подготовка', `${entries.length} ${plural(entries.length, 'файл', 'файла', 'файлов')}`, 0, 1);
+  const zips = entries.filter(e => /\.zip$/i.test(e.path));
+  let blob, name;
+  if (entries.length === 1 && zips.length === 1) {
+    blob = entries[0].file; name = entries[0].path;
+  } else {
+    if (zips.length) toast(`Вложенные архивы пропущены (${zips.length}). Загрузите zip отдельно.`, 'bad');
+    const files = entries.filter(e => !/\.zip$/i.test(e.path));
+    if (!files.length) return;
+    // Отдельные файлы без папки кладём в общую папку: тогда в отчёте у них будет понятное исследование.
+    const loose = files.every(e => !e.path.includes('/'));
+    setStage('Упаковка файлов', `${files.length} файлов`, 0, 1);
+    blob = await makeZip(files.map(e => ({ path: (loose ? 'Загруженные файлы/' : '') + e.path, file: e.file })),
+                         (i, n) => setStage('Упаковка файлов', `${i} / ${n}`, i, n));
+    name = 'upload.zip';
+  }
+  await upload(blob, name);
 }
 
-// Измерения важнее вердикта: оператор проверяет числа, а не ярлык.
-function facts(r) {
-  const d = r.details || {}, out = [];
-  const num = (v, u, n = 1) => v === null || v === undefined ? null : `${(+v).toFixed(n)} ${u}`;
-  if (r.quality_probability != null) out.push(['вероятность нарушения', (+r.quality_probability).toFixed(2)]);
-  const ax = (d.spine || {}).axis || {};
-  if (ax.angle_deg != null) out.push(['угол оси', `${num(ax.angle_deg, '°')} (норма до 5°)`]);
-  if (ax.curvature_mm != null) out.push(['кривизна', num(ax.curvature_mm, 'мм')]);
-  const pos = (d.spine || {}).position || {};
-  if (pos.iliac_area != null) out.push(['гребни подвздошных костей', pos.violated ? 'не визуализированы' : 'видны']);
-  const art = (d.spine || {}).artifacts || {};
-  if (art.length_mm != null) out.push(['инородные тела', num(art.length_mm, 'мм')]);
-  const roi = d.hip_roi || {};
-  for (const [k, ru, norm] of [['m_top_mm', 'отступ сверху', 30], ['m_bottom_mm', 'отступ снизу', 30],
-                               ['m_lat_mm', 'отступ сбоку', 20]])
-    if (roi[k] != null) out.push([ru, `${num(roi[k], 'мм')} (норма от ${norm})`]);
-  const rot = d.hip_rotation || {};
-  if (rot.area_mm2 != null) out.push(['выступ малого вертела', num(rot.area_mm2, 'мм²', 0)]);
-  if (r.time_of_processing != null) out.push(['время обработки', num(r.time_of_processing, 'с', 2)]);
-  if (r.processing_status === 'Failure') out.push(['ошибка', r.error || 'не обработано']);
-  return out.filter(([, v]) => v !== null && v !== undefined);
+// Минимальный ZIP (метод «без сжатия»): DICOM и так почти не сжимается,
+// а собрать архив нужно без внешних библиотек — сервис работает без интернета.
+const CRC = (() => { const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function crc32(buf) { let c = 0xFFFFFFFF; for (let i = 0; i < buf.length; i++) c = CRC[(c ^ buf[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+async function makeZip(files, progress) {
+  const enc = new TextEncoder(), parts = [], central = [];
+  let offset = 0;
+  for (let i = 0; i < files.length; i++) {
+    const data = new Uint8Array(await files[i].file.arrayBuffer());
+    const name = enc.encode(files[i].path), crc = crc32(data);
+    const h = new DataView(new ArrayBuffer(30));
+    h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(6, 0x0800, true);
+    h.setUint32(14, crc, true); h.setUint32(18, data.length, true); h.setUint32(22, data.length, true);
+    h.setUint16(26, name.length, true);
+    parts.push(h.buffer, name, data);
+    const c = new DataView(new ArrayBuffer(46));
+    c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint16(8, 0x0800, true);
+    c.setUint32(16, crc, true); c.setUint32(20, data.length, true); c.setUint32(24, data.length, true);
+    c.setUint16(28, name.length, true); c.setUint32(42, offset, true);
+    central.push(c.buffer, name);
+    offset += 30 + name.length + data.length;
+    if (progress && (i % 20 === 0 || i === files.length - 1)) { progress(i + 1, files.length); await new Promise(r => setTimeout(r)); }
+  }
+  const cdSize = central.reduce((s, p) => s + p.byteLength, 0);
+  const e = new DataView(new ArrayBuffer(22));
+  e.setUint32(0, 0x06054b50, true); e.setUint16(8, files.length, true); e.setUint16(10, files.length, true);
+  e.setUint32(12, cdSize, true); e.setUint32(16, offset, true);
+  return new Blob([...parts, ...central, e.buffer], { type: 'application/zip' });
 }
 
-// --- прочее ---------------------------------------------------------------
-function reset() { job = null; rows = []; selected = null; render(); $('#hint').hidden = false;
-                   $('#shot').hidden = true; $('#facts').textContent = ''; $('#flags').textContent = ''; }
-function fail(msg) { $('#state').textContent = 'Ошибка'; $('#summary').textContent = String(msg).slice(0, 300); }
-function esc(v) { return String(v ?? '').replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c])); }
+function setStage(title, info, value, max) {
+  $('#run').hidden = false;
+  $('#stage').textContent = title;
+  $('#stageInfo').textContent = info || '';
+  $('#bar').max = Math.max(max || 1, 1); $('#bar').value = value || 0;
+}
+
+function upload(blob, name) {
+  resetResults();
+  $('#recent').hidden = true;
+  return new Promise(resolve => {
+    const fd = new FormData();
+    fd.append('file', blob, name);
+    setStage('Загрузка на сервер', '0 %', 0, 1);
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/batch?fmt=xlsx&overlays=true&all_frames=true&sr=true');
+    xhr.upload.onprogress = e => { if (e.lengthComputable) setStage('Загрузка на сервер', `${Math.round(e.loaded / e.total * 100)} %`, e.loaded, e.total); };
+    xhr.onload = () => {
+      let data = null; try { data = JSON.parse(xhr.responseText); } catch { }
+      if (xhr.status >= 400 || !data) { fail((data && data.detail) || xhr.responseText || `HTTP ${xhr.status}`); return resolve(); }
+      poll(data.id, performance.now()).then(resolve);
+    };
+    xhr.onerror = () => { fail('Не удалось отправить файлы: сервис недоступен.'); resolve(); };
+    xhr.send(fd);
+  });
+}
+
+async function poll(id, t0) {
+  for (;;) {
+    let j;
+    try { j = await api(`/jobs/${id}`); } catch (e) { await sleep(1000); continue; }
+    const [done, total] = (j.progress || '0/0').split('/').map(Number);
+    const sec = (performance.now() - t0) / 1000;
+    const eta = done && total && done < total ? ` · осталось ~${Math.ceil(sec / done * (total - done))} с` : '';
+    setStage(j.state === 'queued' ? 'В очереди' : 'Обработка', `${done} / ${total || '?'} исследований${eta}`, done, total);
+    if (j.state === 'failed') return fail(j.error || 'ошибка задания');
+    if (j.state === 'done') return openJob(id);
+    await sleep(400);
+  }
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+function fail(msg) {
+  setStage('Ошибка', '', 0, 1);
+  $('#stageInfo').textContent = String(msg).slice(0, 300);
+  toast(String(msg).slice(0, 300), 'bad');
+}
+
+// ---------------------------------------------------------------------------
+// Результаты
+async function openJob(id) {
+  let rows, job;
+  try { [job, rows] = await Promise.all([api(`/jobs/${id}`), api(`/jobs/${id}/details`)]); }
+  catch (e) {
+    toast('Задание недоступно (результаты хранятся на сервере ограниченное время): ' + e.message, 'bad');
+    resetResults(); return loadRecent();
+  }
+  S.job = id; S.jobInfo = job; S.rows = rows.map((r, i) => ({ ...r, _i: i }));
+  const uids = {};
+  S.rows.forEach(r => { if (r.study_uid) (uids[r.path_to_study] = uids[r.path_to_study] || new Set()).add(r.study_uid); });
+  S.uidByPath = Object.fromEntries(Object.entries(uids).filter(([, u]) => u.size === 1).map(([k, u]) => [k, [...u][0]]));
+  S.reviews = loadReviews(id);
+  history.replaceState(null, '', '#job=' + id);     // ссылкой можно поделиться и вернуться после перезагрузки
+  $('#left').classList.add('compact');
+  $('#recent').hidden = true;
+  const s = job.summary || {};
+  setStage('Готово', `${s.images ?? S.rows.length} кадров за ${fmt(s.seconds_total, 1)} с`, 1, 1);
+  for (const [el, p] of [['#dlReport', 'report'], ['#dlDetails', 'details'], ['#dlOverlays', 'overlays'], ['#dlSr', 'sr']]) {
+    $(el).href = `/jobs/${id}/${p}`; $(el).classList.remove('disabled');
+  }
+  $('#results').hidden = false;
+  S.f.types.clear(); S.f.status = '';
+  renderSummary(); applyFilters();
+  const firstBad = S.view.findIndex(r => cls(r) !== 'ok');
+  select(firstBad >= 0 ? firstBad : 0);
+}
+
+function resetResults() {
+  S.job = null; S.rows = []; S.view = []; S.sel = -1;
+  if (location.hash) history.replaceState(null, '', location.pathname);
+  $('#results').hidden = true; $('#card').hidden = true; $('#sideEmpty').hidden = false;
+  for (const el of ['#dlReport', '#dlDetails', '#dlOverlays', '#dlSr']) { $(el).removeAttribute('href'); $(el).classList.add('disabled'); }
+}
+
+const isFail = r => r.processing_status === 'Failure';
+function humanError(e) {
+  e = String(e || '');
+  if (/InvalidDicomError|DICM|File Meta Information/i.test(e)) return 'Файл не является DICOM или повреждён';
+  if (/Unable to decompress|pixel data/i.test(e)) return 'Не удалось прочитать пиксели снимка (неподдерживаемое сжатие или повреждённые данные)';
+  if (/не найдено DICOM/i.test(e)) return 'В исследовании нет снимков DICOM';
+  return e || 'файл не прочитан';
+}
+const violations = r => String(r.violation_type || '').split(';').filter(Boolean);
+function cls(r) {
+  if (isFail(r)) return 'err';
+  if (violations(r).includes('undetermined')) return 'warn';
+  return r.quality_class ? 'bad' : 'ok';
+}
+const LABEL = { ok: 'качественный', bad: 'нарушение', warn: 'на ручной разбор', err: 'сбой' };
+
+function renderSummary() {
+  const n = S.rows.length, c = { ok: 0, bad: 0, warn: 0, err: 0 };
+  S.rows.forEach(r => c[cls(r)]++);
+  const studies = new Set(S.rows.map(groupKey)).size;
+  const reviewed = S.rows.filter(r => S.reviews[r.image_uid || r._i]).length;
+  const tiles = [['', studies, 'исследований', ''], ['', n, 'кадров', ''], ['ok', c.ok, 'качественных', 'ok'],
+                 ['bad', c.bad, 'с нарушением', 'bad'], ['warn', c.warn, 'на ручной разбор', 'warn'],
+                 ['err', c.err, 'сбоев', ''], ['todo', n - reviewed, 'не проверено', '']];
+  $('#tiles').innerHTML = tiles.filter(t => t[0] === '' || t[0] === 'ok' || t[0] === 'bad' || t[0] === 'todo' || t[1])
+    .map(([k, v, t, col]) => `<div class="tile ${col} ${S.f.status === k && k ? 'on' : ''}" data-k="${k}" title="${k ? 'Показать только эти' : ''}"><b>${v}</b><span>${t}</span></div>`).join('');
+  const counts = {};
+  S.rows.forEach(r => violations(r).forEach(v => counts[v] = (counts[v] || 0) + 1));
+  $('#chips').innerHTML = Object.entries(counts).sort((a, b) => b[1] - a[1])
+    .map(([v, k]) => `<span class="chip ${S.f.types.has(v) ? 'on' : ''}" data-v="${esc(v)}" title="${esc(S.full[v] || '')}">${esc(SHORT[v] || v)}<b>${k}</b></span>`).join('');
+}
+$('#tiles').onclick = e => { const t = e.target.closest('.tile'); if (!t || !t.dataset.k) return;
+  S.f.status = S.f.status === t.dataset.k ? '' : t.dataset.k; renderSummary(); applyFilters(); };
+$('#chips').onclick = e => { const c = e.target.closest('.chip'); if (!c) return;
+  const v = c.dataset.v; S.f.types.has(v) ? S.f.types.delete(v) : S.f.types.add(v); renderSummary(); applyFilters(); };
+$('#q').oninput = e => { S.f.q = e.target.value.trim().toLowerCase(); applyFilters(); };
+// Enter в поиске — вернуться к списку, чтобы сразу листать J / K
+$('#q').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); } };
+// после выбора фокус снимается, чтобы горячие клавиши сразу работали
+$('#region').onchange = e => { S.f.region = e.target.value; applyFilters(); e.target.blur(); };
+$('#sort').onchange = e => { S.f.sort = e.target.value; applyFilters(); e.target.blur(); };
+
+// Исследование — папка; если в одной папке лежат снимки разных исследований
+// (загружены отдельные файлы), они разделяются по StudyInstanceUID. Строки-сбои
+// без UID присоединяются к своей папке.
+const folderOf = r => String(r.path_to_study || '—').split(/[\\/]/).filter(Boolean).pop() || '—';
+function groupKey(r) {
+  const uid = r.study_uid || (S.uidByPath && S.uidByPath[r.path_to_study]) || '';
+  return `${r.path_to_study || ''}|${uid}`;
+}
+const tail = s => { s = String(s || ''); return s.length > 14 ? '…' + s.slice(-10) : s; };
+
+function applyFilters() {
+  const f = S.f, keepUid = S.view[S.sel] && S.view[S.sel]._i;
+  let v = S.rows.filter(r => {
+    if (f.region === 'spine' && r.anatomical_region !== 'spine') return false;
+    if (f.region === 'hip' && !['lh', 'rh'].includes(r.anatomical_region)) return false;
+    if (f.status === 'todo' && S.reviews[r.image_uid || r._i]) return false;
+    if (f.status && f.status !== 'todo' && cls(r) !== f.status) return false;
+    if (f.types.size && !violations(r).some(x => f.types.has(x))) return false;
+    if (f.q) {
+      const hay = [r.file_name, r.path_to_study, r.study_uid, r.image_uid, r.violation_description].join(' ').toLowerCase();
+      if (!hay.includes(f.q)) return false;
+    }
+    return true;
+  });
+  const order = { bad: 0, warn: 1, err: 2, ok: 3 };
+  const groups = new Map();
+  v.forEach(r => { const k = groupKey(r); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(r); });
+  let gs = [...groups.entries()];
+  if (f.sort === 'bad') gs.sort((a, b) => Math.min(...a[1].map(r => order[cls(r)])) - Math.min(...b[1].map(r => order[cls(r)])));
+  S.groups = gs;
+  S.view = gs.flatMap(([, rs]) => rs);
+  const idx = S.view.findIndex(r => r._i === keepUid);
+  S.sel = idx;
+  renderTable();
+  if (idx < 0 && S.view.length) select(0); else if (!S.view.length) showEmptyCard();
+}
+
+function renderTable() {
+  const tb = $('#rows');
+  if (!S.view.length) { tb.innerHTML = `<tr><td colspan="5" class="empty">${S.rows.length ? 'Ничего не подходит под фильтр' : 'Нет кадров'}</td></tr>`; return; }
+  let i = 0, html = '';
+  const names = {};
+  S.groups.forEach(([, rs]) => { const n = folderOf(rs[0]); names[n] = (names[n] || 0) + 1; });
+  for (const [k, rs] of S.groups) {
+    const bad = rs.filter(r => cls(r) !== 'ok').length;
+    const path = rs[0].path_to_study || '', folder = folderOf(rs[0]);
+    const uid = k.split('|')[1];
+    html += `<tr class="grp"><td colspan="5" title="${esc(path + (uid ? ' · Study UID ' + uid : ''))}"><b class="mono">${esc(folder)}</b>`
+      + (names[folder] > 1 && uid ? ` <span class="mono">· UID ${esc(tail(uid))}</span>` : '')
+      + ` · ${rs.length} ${plural(rs.length, 'кадр', 'кадра', 'кадров')}`
+      + (bad ? ` · <span style="color:var(--bad)">${bad} с замечаниями</span>` : ' · всё в порядке') + `</td></tr>`;
+    for (const r of rs) {
+      const c = cls(r), rv = S.reviews[r.image_uid || r._i];
+      const vs = violations(r).map(x => SHORT[x] || x).join(', ');
+      html += `<tr class="fr ${i === S.sel ? 'sel' : ''}" data-i="${i}"><td>${esc(r.file_name || tail(r.image_uid))}</td>`
+        + `<td>${esc(REGION[r.anatomical_region] || r.anatomical_region || '')}</td>`
+        + `<td><span class="tag ${c}">${LABEL[c]}</span></td>`
+        + `<td class="viol">${esc(isFail(r) ? humanError(r.error) : vs)}</td>`
+        + `<td class="rv ${rv ? rv.v : ''}">${rv ? (rv.v === 'agree' ? '✓' : '✗') : ''}</td></tr>`;
+      i++;
+    }
+  }
+  tb.innerHTML = html;
+}
+const plural = (n, a, b, c) => (n % 10 === 1 && n % 100 !== 11) ? a : (n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20)) ? b : c;
+$('#rows').onclick = e => { const tr = e.target.closest('tr.fr'); if (tr) select(+tr.dataset.i); };
+
+function select(i) {
+  if (!S.view.length) return showEmptyCard();
+  S.sel = Math.max(0, Math.min(i, S.view.length - 1));
+  document.querySelectorAll('#rows tr.fr').forEach(tr => tr.classList.toggle('sel', +tr.dataset.i === S.sel));
+  const tr = document.querySelector(`#rows tr.fr[data-i="${S.sel}"]`);
+  if (tr) tr.scrollIntoView({ block: 'nearest' });
+  renderCard(S.view[S.sel]);
+}
+
+function showEmptyCard() { $('#card').hidden = true; $('#sideEmpty').hidden = false; }
+
+// ---------------------------------------------------------------------------
+// Карточка кадра
+function renderCard(r) {
+  $('#sideEmpty').hidden = true; $('#card').hidden = false;
+  $('#pos').textContent = `кадр ${S.sel + 1} из ${S.view.length}`;
+  $('#prev').disabled = S.sel <= 0; $('#next').disabled = S.sel >= S.view.length - 1;
+
+  const c = cls(r), vs = violations(r);
+  const head = { ok: 'Качественный снимок', bad: 'Есть нарушение', warn: 'Область не определена — нужен ручной разбор', err: 'Сбой обработки' }[c];
+  const sub = c === 'bad' ? vs.map(x => S.full[x] || x).join('; ') : c === 'err' ? humanError(r.error) :
+              c === 'warn' ? 'Кадр не похож на DXA позвоночника или бедра, либо перевёрнут.' : REGION[r.anatomical_region] || '';
+  $('#verdict').className = 'verdict ' + c;
+  $('#verdict').innerHTML = `${esc(head)}<small>${esc(sub)}</small>`;
+
+  const img = $('#shot'), msg = $('#shotMsg');
+  img.hidden = true; msg.hidden = false;
+  if (S.job && r.image_uid && !isFail(r)) {
+    msg.textContent = 'загрузка…';
+    img.onload = () => { img.hidden = false; msg.hidden = true; };
+    img.onerror = () => { msg.textContent = 'визуализация недоступна'; };
+    img.src = `/jobs/${S.job}/overlays/${encodeURIComponent(r.image_uid)}.png`;
+  } else { img.removeAttribute('src'); msg.textContent = 'снимок не обработан'; }
+  $('#legend').innerHTML = legend(r.anatomical_region);
+
+  $('#crit').innerHTML = criteria(r).map(critHtml).join('');
+  const fl = (Array.isArray(r.flags) ? r.flags : String(r.flags || '').split(';')).filter(Boolean);
+  $('#flags').innerHTML = fl.length ? '<div class="h3">На что обратить внимание</div>' + fl.map(f => {
+    const t = flagText(f);
+    return `<div class="flag">${esc(t || 'Служебная пометка')} <code>${esc(f)}</code></div>`;
+  }).join('') : '';
+
+  const rv = S.reviews[r.image_uid || r._i] || {};
+  $('#agree').classList.toggle('on', rv.v === 'agree');
+  $('#disagree').classList.toggle('on', rv.v === 'disagree');
+  $('#comment').value = rv.c || '';
+
+  const meta = [['Файл', r.file_name], ['Исследование', r.path_to_study], ['Study UID', r.study_uid], ['Image UID', r.image_uid],
+                ...(isFail(r) ? [['Текст ошибки', r.error]] : []),
+                ['Повторных выгрузок', r.duplicates || 0], ['Уверенность в области', r.region_confidence == null ? '—' : fmt(r.region_confidence, 2)],
+                ['Время обработки', r.time_of_processing == null ? '—' : fmt(r.time_of_processing, 3) + ' с']];
+  $('#meta').innerHTML = meta.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v ?? '—')}</dd>`).join('');
+}
+
+function legend(region) {
+  if (region === 'spine') return '<i style="background:#50d278"></i>ось (норма) <i style="background:#f05a5a"></i>ось с нарушением, посторонние структуры <i style="background:#5aaaff"></i>вспомогательные построения';
+  if (region === 'lh' || region === 'rh') return '<i style="background:#00dcff"></i>найденные границы: верхушка вертела, седалищная кость, наружный контур бедра <i style="background:#3cdc3c"></i>порог выдержан <i style="background:#ff3c3c"></i>не выдержан';
+  return '';
+}
+
+// Критерии: что измерено, с чем сравнивалось, чем кончилось.
+function criteria(r) {
+  const d = r.details || {}, out = [], thr = (S.cfg.spine_thresholds || {});
+  if (isFail(r)) return [];
+  if (d.spine) {
+    const ax = d.spine.axis || {}, pos = d.spine.position || {}, art = d.spine.artifacts || {};
+    const byKp = ax.source === 'keypoints';
+    const lim = byKp ? (S.cfg.axis_limit_deg_tz || 5) : (thr.axis_deg || 5);
+    const notes = [];
+    if (ax.angle_edges_deg != null && !byKp) notes.push(`по краям колонны ${fmt(Math.abs(ax.angle_edges_deg))}°`);
+    if (!byKp && Math.abs(lim - 5) > 0.05) notes.push(`порог сервиса ${fmt(lim, 2)}°: измеритель читает угол примерно на градус ниже эксперта; в ТЗ — 5°`);
+    if (ax.curvature_mm != null) notes.push(`изгиб колонны ${fmt(ax.curvature_mm)} мм`);
+    out.push({ name: 'Ось позвоночника', ok: ax.violated == null ? null : !ax.violated,
+      val: ax.angle_deg == null ? 'не измерена' : `${fmt(Math.abs(ax.angle_deg))}°`, norm: `≤ ${fmt(lim, lim % 1 ? 2 : 0)}°`,
+      note: notes.join(' · '), bar: ax.angle_deg == null ? null : { v: Math.abs(ax.angle_deg), lo: 0, hi: lim, max: Math.max(lim * 2, Math.abs(ax.angle_deg) * 1.1) } });
+    out.push({ name: 'Укладка: гребни подвздошных костей', ok: pos.violated == null ? null : !pos.violated,
+      val: pos.violated ? 'не видны' : 'видны', norm: 'видны',
+      note: pos.iliac_area == null ? '' : `доля кости в зонах гребней ${fmt(pos.iliac_area, 3)} (порог ${fmt(thr.iliac_area ?? 0.001, 3)})`
+        + (pos.iliac_left_area != null ? `, слева ${fmt(pos.iliac_left_area, 3)}, справа ${fmt(pos.iliac_right_area, 3)}` : '') });
+    const found = art.score > 0;
+    out.push({ name: 'Посторонние предметы', ok: art.violated == null ? null : !art.violated,
+      val: art.violated ? `найдены` : 'не найдены', norm: 'нет',
+      note: found ? `самая заметная тонкая яркая структура: длина ${fmt(art.length_mm, 0)} мм, счёт ${fmt(art.score, 1)} при пороге ${fmt(thr.artifact_score ?? 24, 1)}` : '' });
+  }
+  if (d.hip_roi) {
+    const roi = d.hip_roi, m = S.cfg.roi_margins_mm || { top: 30, bottom: 30, lat: 20 };
+    for (const [k, ok, name, ref, norm] of [['m_top_mm', 'top_ok', 'Отступ сверху', 'от верхушки большого вертела', m.top],
+                                           ['m_bottom_mm', 'bottom_ok', 'Отступ снизу', 'от нижней точки седалищной кости', m.bottom],
+                                           ['m_lat_mm', 'lat_ok', 'Отступ сбоку', 'от наружного контура бедра', m.lat]]) {
+      const v = roi[k];
+      out.push({ name, ok: roi[ok], val: v == null ? 'не измерен' : `${fmt(v / 10)} см`, norm: `≥ ${fmt(norm / 10, 0)} см`,
+        note: `${ref} до края поля`, bar: v == null ? null : { v, lo: norm, hi: Infinity, max: Math.max(norm * 2.5, v * 1.1) } });
+    }
+  }
+  if (d.hip_rotation) {
+    const rot = d.hip_rotation, cor = S.cfg.rotation_corridor_mm2 || [96, 272];
+    const kind = rot.area_mm2 == null ? '' : rot.area_mm2 < cor[0] ? ' — переротация: малый вертел почти не выступает' : rot.area_mm2 > cor[1] ? ' — недоротация: выступ слишком большой' : '';
+    out.push({ name: 'Ротация: выступ малого вертела', ok: rot.violated == null ? null : !rot.violated,
+      val: rot.area_mm2 == null ? 'не измерен' : `${fmt(rot.area_mm2, 0)} мм²`, norm: `${fmt(cor[0], 0)}–${fmt(cor[1], 0)} мм²`,
+      note: 'наименее надёжный критерий: проверьте по снимку' + kind,
+      bar: rot.area_mm2 == null ? null : { v: rot.area_mm2, lo: cor[0], hi: cor[1], max: Math.max(cor[1] * 1.5, rot.area_mm2 * 1.1) } });
+  }
+  if (!d.spine && !d.hip_roi && r.anatomical_region === 'unknown')
+    out.push({ name: 'Анатомическая область', ok: null, val: 'не определена', norm: 'позвоночник или бедро',
+      note: 'Кадр не принят фильтром области и ушёл на ручной разбор.' });
+  return out;
+}
+
+function critHtml(c) {
+  const ic = c.ok === true ? ['ok', '✓'] : c.ok === false ? ['bad', '✗'] : ['na', '?'];
+  let bar = '';
+  if (c.bar) {
+    const { v, lo, hi, max } = c.bar, pct = x => Math.max(0, Math.min(100, x / max * 100));
+    const z0 = pct(lo), z1 = hi === Infinity ? 100 : pct(hi);
+    bar = `<div class="bar" title="зелёная зона — норма"><div class="zone" style="left:${z0}%;width:${z1 - z0}%"></div><div class="mk" style="left:calc(${pct(v)}% - 1px)"></div></div>`;
+  }
+  return `<div class="c"><div class="ic ${ic[0]}">${ic[1]}</div><div class="name">${esc(c.name)}</div>
+    <div class="val">${esc(c.val)} <span class="dim small">/ норма ${esc(c.norm)}</span></div>${bar}
+    ${c.note ? `<div class="note">${esc(c.note)}</div>` : ''}</div>`;
+}
+
+$('#prev').onclick = () => select(S.sel - 1);
+$('#next').onclick = () => select(S.sel + 1);
+
+// ---------------------------------------------------------------------------
+// Решения специалиста: хранятся в браузере отдельно для каждого задания.
+function loadReviews(id) { try { return JSON.parse(localStorage.getItem('dxa-review:' + id) || '{}'); } catch { return {}; } }
+function saveReviews() { try { localStorage.setItem('dxa-review:' + S.job, JSON.stringify(S.reviews)); } catch { } }
+function setReview(v) {
+  const r = S.view[S.sel]; if (!r) return;
+  const k = r.image_uid || r._i, cur = S.reviews[k] || {};
+  if (cur.v === v) delete S.reviews[k];
+  else S.reviews[k] = { v, c: $('#comment').value, t: new Date().toISOString() };
+  saveReviews(); renderSummary(); renderTable();
+  if (S.reviews[k] && S.sel < S.view.length - 1 && S.f.status !== 'todo') select(S.sel + 1);
+  else if (S.f.status === 'todo') applyFilters(); else renderCard(r);
+}
+$('#agree').onclick = () => setReview('agree');
+$('#disagree').onclick = () => setReview('disagree');
+$('#comment').oninput = () => {
+  const r = S.view[S.sel]; if (!r) return;
+  const k = r.image_uid || r._i;
+  S.reviews[k] = { ...(S.reviews[k] || { v: '' }), c: $('#comment').value, t: new Date().toISOString() };
+  saveReviews();
+};
+$('#dlReview').onclick = () => {
+  const head = ['path_to_study', 'file_name', 'study_uid', 'image_uid', 'anatomical_region', 'quality_class', 'violation_type', 'решение_специалиста', 'комментарий', 'время'];
+  const q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const lines = S.rows.map(r => { const rv = S.reviews[r.image_uid || r._i] || {};
+    return [r.path_to_study, r.file_name, r.study_uid, r.image_uid, r.anatomical_region, r.quality_class, r.violation_type,
+            rv.v === 'agree' ? 'согласен' : rv.v === 'disagree' ? 'не согласен' : '', rv.c || '', rv.t || ''].map(q).join(','); });
+  // BOM — чтобы Excel открыл кириллицу без мастера импорта
+  const blob = new Blob(['﻿' + [head.join(','), ...lines].join('\r\n')], { type: 'text/csv;charset=utf-8' });
+  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `отметки_${S.job}.csv` });
+  document.body.append(a); a.click(); a.remove();
+};
+
+// ---------------------------------------------------------------------------
+// Снимок на весь экран: колесо — масштаб, перетаскивание — сдвиг.
+const lb = { s: 1, x: 0, y: 0, drag: null };
+function openLightbox() {
+  if ($('#shot').hidden) return;
+  $('#lbImg').src = $('#shot').src;
+  const r = S.view[S.sel];
+  $('#lbCap').textContent = `${r.file_name || ''} · ${REGION[r.anatomical_region] || ''} · ${LABEL[cls(r)]} · колесо — масштаб, двойной щелчок — сброс, Esc — закрыть`;
+  lb.s = 1; lb.x = 0; lb.y = 0; applyLb();
+  $('#lightbox').hidden = false;
+}
+function applyLb() { $('#lbImg').style.transform = `translate(${lb.x}px, ${lb.y}px) scale(${lb.s})`; }
+$('#shotbox').onclick = openLightbox;
+$('#lightbox').addEventListener('wheel', e => {
+  e.preventDefault();
+  const img = $('#lbImg').getBoundingClientRect();
+  const k = e.deltaY < 0 ? 1.2 : 1 / 1.2, s = Math.max(1, Math.min(10, lb.s * k)), f = s / lb.s;
+  lb.x = e.clientX - (e.clientX - img.left) * f - (img.left - lb.x); lb.y = e.clientY - (e.clientY - img.top) * f - (img.top - lb.y);
+  if (s === 1) { lb.x = 0; lb.y = 0; }
+  lb.s = s; applyLb();
+}, { passive: false });
+$('#lightbox').onmousedown = e => { lb.drag = { x: e.clientX - lb.x, y: e.clientY - lb.y, moved: false }; };
+window.addEventListener('mousemove', e => { if (!lb.drag) return; lb.drag.moved = true; lb.x = e.clientX - lb.drag.x; lb.y = e.clientY - lb.drag.y; applyLb(); });
+window.addEventListener('mouseup', e => { if (lb.drag && !lb.drag.moved && e.target === $('#lightbox')) $('#lightbox').hidden = true; lb.drag = null; });
+$('#lightbox').ondblclick = () => { lb.s = 1; lb.x = 0; lb.y = 0; applyLb(); };
+
+// ---------------------------------------------------------------------------
+// Клавиатура
+$('#helpBtn').onclick = () => { $('#help').hidden = false; };
+$('#helpClose').onclick = () => { $('#help').hidden = true; };
+$('#help').onclick = e => { if (e.target === $('#help')) $('#help').hidden = true; };
+document.addEventListener('keydown', e => {
+  const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName);
+  if (e.key === 'Escape') {
+    if (!$('#lightbox').hidden) $('#lightbox').hidden = true;
+    else if (!$('#help').hidden) $('#help').hidden = true;
+    else if (typing) document.activeElement.blur();
+    return;
+  }
+  if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
+  const k = e.key.toLowerCase();
+  if (k === '?' || (k === '/' && e.shiftKey)) { $('#help').hidden = false; return e.preventDefault(); }
+  if (k === '/') { $('#q').focus(); return e.preventDefault(); }
+  if (!S.view.length) return;
+  if (k === 'j' || k === 'arrowdown' || k === 'о') { select(S.sel + 1); refreshLb(); e.preventDefault(); }
+  else if (k === 'k' || k === 'arrowup' || k === 'л') { select(S.sel - 1); refreshLb(); e.preventDefault(); }
+  else if (k === 'n' || k === 'т') { const i = S.view.findIndex((r, j) => j > S.sel && cls(r) !== 'ok'); if (i >= 0) { select(i); refreshLb(); } }
+  else if (k === 'a' || k === 'ф') setReview('agree');
+  else if (k === 'd' || k === 'в') setReview('disagree');
+  else if (k === 'c' || k === 'с') { $('#comment').focus(); e.preventDefault(); }
+  else if (k === 'f' || k === 'а' || k === 'enter') { openLightbox(); e.preventDefault(); }
+});
+function refreshLb() { if (!$('#lightbox').hidden) setTimeout(openLightbox, 150); }
+
+boot();
 </script>
+</html>
