@@ -59,8 +59,12 @@ def write_details(rows: list[dict], path: str | Path) -> Path:
     """Все измерения в JSON: то, чего не видно в таблице (мм, градусы, флаги)."""
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    payload = [{'path_to_study': r.get('path_to_study'), 'image_uid': r.get('image_uid'),
-                'file_name': r.get('file_name'),
+    payload = [{'path_to_study': r.get('path_to_study'), 'study_uid': r.get('study_uid'),
+                'image_uid': r.get('image_uid'),
+                'file_name': r.get('file_name'), 'duplicates': r.get('duplicates'),
+                'region_confidence': r.get('region_confidence'),
+                'error': r.get('error') or '',
+                'probabilities': {k[2:]: v for k, v in r.items() if k.startswith('p_')},
                 'anatomical_region': r.get('anatomical_region'),
                 'quality_class': r.get('quality_class'),
                 'quality_probability': r.get('quality_probability'),

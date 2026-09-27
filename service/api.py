@@ -170,10 +170,17 @@ def health() -> dict:
 def version() -> dict:
     a = analyzer()
     from hip_rotation import THRESHOLDS as ROT
+    from hip_roi.geometry import BOTTOM_MM, LAT_MM, TOP_MM
+    from spine_qc.geometry import AXIS_LIMIT_DEG
     return {'version': VERSION, 'hip_method': a.hip_method,
             'spine_thresholds': {k: v for k, v in a.spine.thresholds.items()
                                  if not isinstance(v, dict)},
             'rotation_corridor_mm2': [ROT['area_lo'], ROT['area_hi']],
+            # пороги, по которым выносится вердикт, — чтобы интерфейс показывал
+            # настоящие нормы, а не зашитые в страницу числа
+            'roi_margins_mm': {'top': TOP_MM, 'bottom': BOTTOM_MM, 'lat': LAT_MM},
+            'axis_limit_deg_tz': AXIS_LIMIT_DEG,
+            'keypoints': a.keypoints is not None and bool(getattr(a.keypoints, 'available', False)),
             'region_classes': list(REGION_RU)}
 
 
@@ -217,6 +224,9 @@ async def analyze(file: UploadFile = File(...)) -> JSONResponse:
         'quality_class': int(bool(res['violations'])),
         'violation_type': ';'.join(res['violations']),
         'violation_description': [VIOLATIONS[v] for v in res['violations']],
+        'region_confidence': res.get('region_confidence'),
+        'quality_probability': res.get('quality_probability'),
+        'probabilities': res.get('probabilities', {}),
         'flags': res['flags'],
         'details': res['details'],
         'processing_status': 'Success',

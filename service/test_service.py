@@ -217,6 +217,12 @@ def test_api() -> None:
     check('POST /analyze отдаёт поля ТЗ', r.status_code == 200 and need <= set(j))
     r = c.post('/analyze', files={'file': ('x.dcm', b'garbage', 'application/dicom')})
     check('POST /analyze отвергает мусор', r.status_code == 400)
+    page = c.get('/')
+    check('GET / отдаёт веб-интерфейс', page.status_code == 200 and 'id="drop"' in page.text
+          and 'id="rows"' in page.text)
+    v = c.get('/version').json()
+    check('GET /version отдаёт пороги для интерфейса',
+          {'roi_margins_mm', 'axis_limit_deg_tz', 'rotation_corridor_mm2', 'spine_thresholds'} <= set(v))
 
 
 def test_keypoints() -> None:
@@ -455,7 +461,7 @@ def test_batch_api() -> None:
             if f.is_file():
                 z.write(f, f'{study.name}/{f.relative_to(study).as_posix()}')
     c = TestClient(api.app)
-    r = c.post('/batch?fmt=csv&wait=true&sr=true',
+    r = c.post('/batch?fmt=csv&wait=true&sr=true&overlays=true&all_frames=true',
                files={'file': ('studies.zip', buf.getvalue(), 'application/zip')})
     job = r.json()
     check('POST /batch?wait=true завершает задание',
@@ -465,6 +471,12 @@ def test_batch_api() -> None:
     rep = c.get(f"/jobs/{job['id']}/report")
     check('GET /jobs/{id}/report отдаёт таблицу ТЗ',
           rep.status_code == 200 and rep.content.decode('utf-8').startswith('path_to_study'))
+    det = c.get(f"/jobs/{job['id']}/details").json()
+    check('details.json: поля для интерфейса у каждого кадра',
+          all({'error', 'study_uid', 'processing_status', 'details'} <= set(d) for d in det))
+    uid = next((d['image_uid'] for d in det if d['image_uid']), '')
+    one = c.get(f"/jobs/{job['id']}/overlays/{uid}.png")
+    check('оверлей кадра по image_uid', one.status_code == 200 and one.content[:4] == b'\x89PNG')
     sr = c.get(f"/jobs/{job['id']}/sr")
     n_sr = len(zipfile.ZipFile(io.BytesIO(sr.content)).namelist()) if sr.status_code == 200 else 0
     check('GET /jobs/{id}/sr отдаёт SR на каждый кадр',

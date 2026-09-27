@@ -27,7 +27,12 @@ def _font(size: int = 12):
             return ImageFont.truetype(path, size), True
         except OSError:
             continue
-    return ImageFont.load_default(), False
+    # масштабируемый встроенный шрифт Pillow: кириллицы в нём нет, но «°» и
+    # латиница рисуются ровно, в отличие от растрового
+    try:
+        return ImageFont.load_default(size=size), False
+    except TypeError:                              # Pillow < 10.1
+        return ImageFont.load_default(), False
 
 CYAN = (0, 220, 255)
 GREEN = (60, 220, 60)

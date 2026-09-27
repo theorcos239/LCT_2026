@@ -31,6 +31,11 @@ def render_overlay(img: np.ndarray, result: dict | None = None, scale: int = 2) 
     base = base.resize((base.width * scale, base.height * scale), Image.NEAREST)
     d = ImageDraw.Draw(base)
     h, w = col.shape
+    # Подписи по-русски, только если есть шрифт с кириллицей: в образе сервиса
+    # шрифтов нет, и штатный шрифт PIL рисовал бы вместо букв квадратики.
+    from hip_roi.overlay import _font
+    font, cyr = _font(12)
+    lab = ('ось', 'гребни', 'артефакт', 'мм') if cyr else ('axis', 'iliac', 'artifact', 'mm')
 
     # ось: измеренная прямая по центрам тел
     b = col.valid
@@ -45,7 +50,7 @@ def render_overlay(img: np.ndarray, result: dict | None = None, scale: int = 2) 
                fill=HINT, width=1)
         ang = c['axis']['angle_deg']
         if ang is not None:
-            d.text((4, 4), f'ось {ang:+.1f}°', fill=colr)
+            d.text((4, 4), f'{lab[0]} {ang:+.1f}°', fill=colr, font=font)
 
     # зоны гребней подвздошных костей
     gap = mm2px(35.0)
@@ -54,13 +59,13 @@ def render_overlay(img: np.ndarray, result: dict | None = None, scale: int = 2) 
         if x1 - x0 > 2:
             d.rectangle([x0 * scale, int(h * 0.5) * scale, x1 * scale - 1, h * scale - 1],
                         outline=colr, width=1)
-    d.text((4, 16), f"гребни {c['position']['iliac_area']:.3f}", fill=colr)
+    d.text((4, 18), f"{lab[1]} {c['position']['iliac_area']:.3f}", fill=colr, font=font)
 
     # посторонние структуры
     art = c['artifacts']
     if art['violated']:
-        d.text((4, 28), f"артефакт {art['length_mm']:.0f} мм", fill=BAD)
+        d.text((4, 32), f"{lab[2]} {art['length_mm']:.0f} {lab[3]}", fill=BAD, font=font)
 
     if res['violations']:
-        d.text((4, h * scale - 14), ' | '.join(res['violations'])[:120], fill=BAD)
+        d.text((4, h * scale - 16), ' | '.join(res['violations'])[:120], fill=BAD, font=font)
     return base
