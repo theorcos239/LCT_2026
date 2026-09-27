@@ -37,9 +37,15 @@ batch)
     fi
     DATA=$(cd "$DATA" && pwd)
     mkdir -p "$OUT"
+    OUT=$(cd "$OUT" && pwd)
     FMT="${FMT:-xlsx}"
     echo "обработка $DATA -> $OUT/report.${FMT}"
+    # Контейнер запускается от uid/gid вызывающего: на Linux каталог ./out
+    # создан им с правами 755, и пользователь образа (uid 10001) писать туда
+    # не смог бы. Заодно результаты принадлежат тому, кто их заказал, а не
+    # безымянному uid.
     exec docker run --rm \
+        --user "$(id -u):$(id -g)" \
         -v "${DATA}:/data:ro" \
         -v "${OUT}:/out" \
         "${IMAGE}:${TAG}" \

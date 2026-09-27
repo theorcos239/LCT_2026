@@ -118,7 +118,9 @@ def main() -> int:
     lo, hi = corridor(area[ok.values & (y_all == 0)], best_q)
     thr = {**DEFAULTS, 'area_lo': round(lo, 1), 'area_hi': round(hi, 1),
            'corridor_percentile': best_q}
-    print('коридор нормы для поставки: %.0f-%.0f мм²' % (lo, hi))
+    # «кв. мм», а не «мм²»: «²» нет в cp1251, и в консоли Windows print падал
+    # раньше, чем калибровка успевала сохранить пороги.
+    print('коридор нормы для поставки: %.0f-%.0f кв. мм' % (lo, hi))
 
     if not args.no_save:
         THRESHOLDS.write_text(json.dumps(thr, ensure_ascii=False, indent=2), encoding='utf-8')
