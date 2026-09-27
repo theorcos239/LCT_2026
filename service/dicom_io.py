@@ -138,8 +138,55 @@ def study_dirs(root: str | Path) -> list[Path]:
         return [p.parent]
     if any(_is_candidate(f) for f in p.iterdir()):
         return [p]
-    subs = [d for d in sorted(p.iterdir()) if d.is_dir() and dicom_files(d)]
+    subs = _dicom_subdirs(p)
+    # Архив, сжатый из папки, — это одна папка-обёртка, а в ней исследования.
+    # Без этой проверки обёртка стала бы одним исследованием на всех пациентов.
+    if len(subs) == 1:
+        inner = _through_single_dirs(subs[0])
+        if _distinct_studies(_dicom_subdirs(inner)) >= 2:
+            return study_dirs(inner)
     return subs or ([p] if dicom_files(p) else [])
+
+
+def _dicom_subdirs(p: Path) -> list[Path]:
+    return [d for d in sorted(p.iterdir())
+            if d.is_dir() and not _is_service_file(d) and dicom_files(d)]
+
+
+def _through_single_dirs(d: Path) -> Path:
+    """Спуск по цепочке папок, в каждой из которых только одна подпапка с DICOM."""
+    while not any(_is_candidate(f) for f in d.iterdir()):
+        subs = _dicom_subdirs(d)
+        if len(subs) != 1:
+            break
+        d = subs[0]
+    return d
+
+
+def _distinct_studies(dirs: list[Path]) -> int:
+    """Сколько разных StudyInstanceUID среди папок (по первому читаемому файлу).
+
+    Серии одного исследования делят UID и остаются одним исследованием. Если UID
+    не прочитать или он пуст — считаем, что различить нельзя (0): тогда папка
+    остаётся одним исследованием, как было, и ошибиться в худшую сторону нельзя.
+    """
+    import pydicom
+
+    _silence()
+    uids = set()
+    for d in dirs:
+        for f in dicom_files(d):
+            try:
+                uid = str(pydicom.dcmread(str(f), stop_before_pixels=True,
+                                          specific_tags=['StudyInstanceUID'])
+                          .get('StudyInstanceUID', '') or '')
+            except Exception:
+                continue
+            if not uid:
+                return 0
+            uids.add(uid)
+            break
+    return len(uids)
 
 
 def unique_frames(study: str | Path, study_key: str | None = None

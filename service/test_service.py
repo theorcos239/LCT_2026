@@ -475,6 +475,31 @@ def test_batch_api() -> None:
     check('задание старше срока удаляется вместе с файлами',
           job['id'] not in api.JOBS and not workdir.exists())
 
+def test_wrapper_folder() -> None:
+    """Архив, сжатый из папки: папка-обёртка не склеивает исследования.
+
+    Раньше единственная верхняя папка считалась одним исследованием на всех
+    пациентов. При этом исследование из двух серий-подпапок, завёрнутое в
+    папки, должно остаться одним исследованием.
+    """
+    from .dicom_io import study_dirs
+
+    studies = [d for d in sorted(DATA.iterdir()) if d.is_dir()]
+    two_series = next((d for d in studies if len([s for s in d.iterdir() if s.is_dir()]) > 1), None)
+    tmp = Path(tempfile.mkdtemp(prefix='dxa_wrap_'))
+    try:
+        for st in studies[:3]:
+            shutil.copytree(st, tmp / 'wrap' / 'Исследования' / st.name)
+        found = study_dirs(tmp / 'wrap')
+        check('папка-обёртка: исследования не склеиваются', len(found) == 3, f'{len(found)} из 3')
+        if two_series is not None:
+            shutil.copytree(two_series, tmp / 'one' / 'deeper' / two_series.name)
+            found = study_dirs(tmp / 'one')
+            check('исследование из двух серий в обёртках остаётся одним', len(found) == 1,
+                  f'{len(found)}')
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
 # --------------------------------------------------------------------------- #
 def main() -> int:
     ap = argparse.ArgumentParser(description='Тесты сервиса контроля качества DXA')
@@ -499,6 +524,7 @@ def main() -> int:
             test_dedup_and_regions()
             test_compressed_dicom()
             test_pacs_export_layout()
+            test_wrapper_folder()
             test_batch_api()
             test_determinism()
             test_timing()
