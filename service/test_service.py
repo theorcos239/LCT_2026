@@ -200,8 +200,10 @@ def test_api() -> None:
     """Эндпоинты отвечают и отдают обязательные поля."""
     try:
         from fastapi.testclient import TestClient
-    except ImportError:
-        check('API (пропущено: нет fastapi)', True)
+    except (ImportError, RuntimeError):
+        # RuntimeError — так starlette сообщает об отсутствии httpx: в рабочем
+        # образе тестовых зависимостей нет, и пропуск лучше падения всего набора.
+        check('API (пропущено: нет fastapi или httpx)', True)
         return
     from .api import app
     c = TestClient(app)
@@ -318,7 +320,8 @@ def test_dicom_sr() -> None:
 
     try:
         from fastapi.testclient import TestClient
-    except ImportError:
+    except (ImportError, RuntimeError):
+        check('POST /analyze/sr (пропущено: нет fastapi или httpx)', True)
         return
     from .api import app
     r = TestClient(app).post('/analyze/sr', files={
@@ -327,6 +330,59 @@ def test_dicom_sr() -> None:
     if ok:
         ok = pydicom.dcmread(io.BytesIO(r.content)).SOPClassUID == SR_SOP_CLASS
     check('POST /analyze/sr отдаёт DICOM SR', ok, f'status {r.status_code}')
+
+
+def test_compressed_dicom() -> None:
+    """Сжатый DICOM читается без потерь (ТЗ 8.2: качество предобработки DICOM).
+
+    Обучающий набор несжатый, но из PACS снимки приходят в RLE, JPEG Lossless,
+    JPEG-LS. Без декодера такой кадр ушёл бы в Failure — проверяем, что
+    пиксели совпадают с исходными побайтно.
+    """
+    import pydicom
+    from pydicom.uid import RLELossless
+
+    from .dicom_io import dicom_files, read_frame
+
+    src = dicom_files(sorted(DATA.iterdir())[0])[0]
+    ref = read_frame(src).pixels
+    tmp = Path(tempfile.mkdtemp(prefix='dxa_ts_'))
+    try:
+        ds = pydicom.dcmread(str(src))
+        ds.compress(RLELossless)
+        ds.save_as(str(tmp / 'rle.dcm'), enforce_file_format=True)
+        variants = {'RLE': tmp / 'rle.dcm'}
+        try:
+            import gdcm
+        except ImportError:
+            gdcm = None
+        if gdcm is not None:
+            for name, ts in (('JPEG Lossless', gdcm.TransferSyntax.JPEGLosslessProcess14_1),
+                             ('JPEG-LS', gdcm.TransferSyntax.JPEGLSLossless)):
+                r = gdcm.ImageReader()
+                r.SetFileName(str(src))
+                r.Read()
+                ch = gdcm.ImageChangeTransferSyntax()
+                ch.SetTransferSyntax(gdcm.TransferSyntax(ts))
+                ch.SetInput(r.GetImage())
+                ch.Change()
+                w = gdcm.ImageWriter()
+                w.SetFile(r.GetFile())
+                w.SetImage(ch.GetOutput())
+                out = tmp / f'{name}.dcm'
+                w.SetFileName(str(out))
+                w.Write()
+                variants[name] = out
+        else:
+            check('JPEG Lossless / JPEG-LS (пропущено: нет python-gdcm)', True)
+        for name, f in variants.items():
+            try:
+                same = np.array_equal(read_frame(f).pixels, ref)
+                check(f'сжатый DICOM {name} читается без потерь', same)
+            except Exception as e:
+                check(f'сжатый DICOM {name} читается без потерь', False, f'{type(e).__name__}: {e}')
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -351,6 +407,7 @@ def main() -> int:
         else:
             print('данные')
             test_dedup_and_regions()
+            test_compressed_dicom()
             test_determinism()
             test_timing()
             print('модель ключевых точек')
