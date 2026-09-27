@@ -16,6 +16,16 @@
 `spine_qc/metrics.json` и `hip_rotation/metrics.json` и печатаются здесь же
 для сравнения. Разница между двумя таблицами — цена подгонки порога на выборке
 с 6-36 положительными примерами, и её видно.
+
+**Откуда берётся score для ROC-AUC и PR-AUC.** Для каждого из пяти критериев
+это своя непрерывная величина до порога (угол оси в градусах, счёт top-hat,
+отклонение от коридора нормы и т.п.), а не бинарное решение конвейера —
+ранговая AUC на 0/1-скоре математически совпадает со сбалансированной
+точностью и не проверяет ничего сверх неё. Для агрегатов «по области» и
+«в целом» такой общей шкалы нет (критерии в разных единицах), там AUC
+действительно вырождается в сбалансированную точность — это не ошибка, а
+следствие того, что бинарный вердикт «есть хоть одно нарушение» не сводится к
+одному числу.
 """
 from __future__ import annotations
 
@@ -42,6 +52,32 @@ CRITERIA = {
 }
 
 
+def _risk_score(vtype: str, details: dict) -> float:
+    """Непрерывная величина «насколько похоже на нарушение» до применения порога.
+
+    Знак всегда один: больше -> ближе к нарушению. Нужна только для ROC-AUC и
+    PR-AUC (см. docstring модуля) — сами вердикты этой функцией не считаются,
+    они уже есть в `details` от конвейера.
+    """
+    try:
+        if vtype == 'spine_axis':
+            return abs(details['spine']['axis']['angle_deg'])
+        if vtype == 'spine_position':
+            return -details['spine']['position']['iliac_area']
+        if vtype == 'spine_artifacts':
+            return details['spine']['artifacts']['score']
+        if vtype == 'hip_rotation':
+            return details['hip_rotation']['corridor_distance']
+        if vtype == 'hip_roi':
+            from hip_roi.geometry import BOTTOM_MM, LAT_MM, TOP_MM
+            r = details['hip_roi']
+            return max(TOP_MM - r['m_top_mm'], BOTTOM_MM - r['m_bottom_mm'],
+                      LAT_MM - r['m_lat_mm'])
+    except (KeyError, TypeError):
+        pass
+    return float('nan')
+
+
 def run(hip_method: str = 'kit2') -> pd.DataFrame:
     """Прогон конвейера по всем уникальным кадрам обучающего набора."""
     from .pipeline import Analyzer
@@ -63,7 +99,7 @@ def run(hip_method: str = 'kit2') -> pd.DataFrame:
             'study': r.study, 'rel_path': r.rel_path, 'expert_region': r.label,
             'region': res['anatomical_region'], 'violations': res['violations'],
             'flags': ';'.join(res['flags']), 'status': status, 'error': err,
-            'seconds': time.perf_counter() - t0,
+            'seconds': time.perf_counter() - t0, 'details': res.get('details', {}),
             **{f'y_{c}': getattr(r, f'y_{c}') for c in trainset.CRITERIA},
         })
     return pd.DataFrame(rows)
@@ -80,7 +116,12 @@ def evaluate(d: pd.DataFrame, n_boot: int = 2000) -> dict:
             continue
         y = sub[col].values.astype(int)
         pred = sub.violations.apply(lambda v: int(vtype in v)).values
-        m = stats.evaluate(y, pred, pred.astype(float), sub.study.values, n_boot=n_boot)
+        # Скор для AUC — своя непрерывная величина критерия, не бинарный
+        # вердикт (см. docstring модуля и _risk_score). Кадр без измерения
+        # (сбой геометрии) откатывается на вердикт — он же в конфьюжн-матрице.
+        raw = sub.details.apply(lambda dd: _risk_score(vtype, dd)).values.astype(float)
+        score = np.where(np.isfinite(raw), raw, pred.astype(float))
+        m = stats.evaluate(y, pred, score, sub.study.values, n_boot=n_boot)
         m['positives'] = int(y.sum())
         out['per_violation'][vtype] = m
 
@@ -180,7 +221,7 @@ def main() -> int:
         res['oof_reference'] = ref
         METRICS.write_text(json.dumps(res, ensure_ascii=False, indent=2, default=float),
                            encoding='utf-8')
-        d.drop(columns=['violations']).assign(
+        d.drop(columns=['violations', 'details']).assign(
             violations=d.violations.apply(';'.join)).to_csv(
             HERE / 'evaluation.csv', index=False, encoding='utf-8')
         print(f'\nсохранено: {METRICS.name}, evaluation.csv')
