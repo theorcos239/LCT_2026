@@ -265,6 +265,70 @@ def test_keypoints() -> None:
           [{k: r[k] for k in keys} for r in rows] == [{k: r[k] for k in keys} for r in r2])
 
 
+def test_dicom_sr() -> None:
+    """DICOM SR (ТЗ 2.6): валидный Basic Text SR, связан со снимком, читается обратно.
+
+    Главное — связь с исходным снимком: SR с чужим StudyInstanceUID или без
+    ссылки на изображение PACS покажет отдельным исследованием, и заключение
+    потеряется.
+    """
+    import io
+    import zipfile
+
+    import pydicom
+
+    from .dicom_io import unique_frames
+    from .dicom_sr import SR_SOP_CLASS, build_sr
+    from .pipeline import REGION_RU, VIOLATIONS, Analyzer, process_study
+    from .report import write_sr
+
+    study = sorted(DATA.iterdir())[0]
+    frames, _ = unique_frames(study)
+    fr = frames[0]
+    src = pydicom.dcmread(str(fr.path), stop_before_pixels=True)
+    res = Analyzer.load().analyze_pixels(fr.pixels)
+    res['violations'] = ['spine_axis']              # заключение с нарушением
+    buf = io.BytesIO()
+    build_sr(src, res, VIOLATIONS, REGION_RU).save_as(buf, enforce_file_format=True)
+    back = pydicom.dcmread(io.BytesIO(buf.getvalue()))
+
+    check('SR: класс Basic Text SR и модальность SR',
+          back.SOPClassUID == SR_SOP_CLASS and back.Modality == 'SR')
+    check('SR: то же исследование, новая серия',
+          back.StudyInstanceUID == src.StudyInstanceUID
+          and back.SeriesInstanceUID != src.get('SeriesInstanceUID'))
+    ref = back.ContentSequence[1].ReferencedSOPSequence[0]
+    check('SR: ссылается на исходный снимок',
+          ref.ReferencedSOPInstanceUID == src.SOPInstanceUID
+          and ref.ReferencedSOPClassUID == src.SOPClassUID)
+    text = back.ContentSequence[0].TextValue
+    check('SR: заключение по-русски с текстом нарушения',
+          VIOLATIONS['spine_axis'] in text and REGION_RU[res['anatomical_region']] in text,
+          text.splitlines()[0])
+
+    rows = process_study(study, Analyzer.load(), 's')
+    tmp = Path(tempfile.mkdtemp(prefix='dxa_sr_'))
+    try:
+        z = zipfile.ZipFile(write_sr(rows, {f.image_uid: f for f in frames}, tmp / 'sr.zip'))
+        ok = [r for r in rows if r['processing_status'] == 'Success']
+        check('SR: в архиве по файлу на каждый обработанный кадр',
+              len(z.namelist()) == len(ok), f'{len(z.namelist())} из {len(ok)}')
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    try:
+        from fastapi.testclient import TestClient
+    except ImportError:
+        return
+    from .api import app
+    r = TestClient(app).post('/analyze/sr', files={
+        'file': (fr.path.name, fr.path.read_bytes(), 'application/dicom')})
+    ok = r.status_code == 200
+    if ok:
+        ok = pydicom.dcmread(io.BytesIO(r.content)).SOPClassUID == SR_SOP_CLASS
+    check('POST /analyze/sr отдаёт DICOM SR', ok, f'status {r.status_code}')
+
+
 # --------------------------------------------------------------------------- #
 def main() -> int:
     ap = argparse.ArgumentParser(description='Тесты сервиса контроля качества DXA')
@@ -291,6 +355,8 @@ def main() -> int:
             test_timing()
             print('модель ключевых точек')
             test_keypoints()
+            print('DICOM SR')
+            test_dicom_sr()
 
     print(f'\nпройдено {len(PASS)}, провалено {len(FAIL)}')
     for f in FAIL:

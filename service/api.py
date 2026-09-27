@@ -10,12 +10,14 @@
     GET  /taxonomy               перечень типов нарушений
     POST /analyze                один DICOM-файл -> вердикт в JSON
     POST /analyze/overlay        один DICOM-файл -> PNG с визуализацией
+    POST /analyze/sr             один DICOM-файл -> DICOM SR с текстовым заключением
     POST /batch                  zip с исследованиями -> задание на обработку
     GET  /jobs                   список заданий
     GET  /jobs/{id}              статус и сводка
     GET  /jobs/{id}/report       итоговая таблица (.xlsx или .csv)
     GET  /jobs/{id}/details      все измерения в JSON
     GET  /jobs/{id}/overlays     zip с визуализацией нарушений
+    GET  /jobs/{id}/sr           zip с DICOM SR на каждый кадр
 
 Пакетная обработка идёт заданием в фоне, а не в запросе: закрытый тестовый
 набор может оказаться большим, а держать HTTP-соединение открытым полчаса —
@@ -47,7 +49,7 @@ except ImportError as e:                    # noqa: F841
 
 from .dicom_io import extract_archive, read_frame
 from .pipeline import REGION_RU, VIOLATIONS, Analyzer, process_batch
-from .report import summary, write_details, write_overlays, write_table
+from .report import summary, write_details, write_overlays, write_sr, write_table
 
 VERSION = '1.0.0'
 
@@ -100,7 +102,7 @@ class Job:
 JOBS: dict[str, Job] = {}
 
 
-def _run_job(job: Job, data_dir: Path, fmt: str, overlays: bool) -> None:
+def _run_job(job: Job, data_dir: Path, fmt: str, overlays: bool, sr: bool = False) -> None:
     try:
         job.state = 'running'
 
@@ -111,13 +113,16 @@ def _run_job(job: Job, data_dir: Path, fmt: str, overlays: bool) -> None:
         out = job.workdir / f'report.{fmt}'
         write_table(rows, out)
         write_details(rows, job.workdir / 'details.json')
-        if overlays:
+        if overlays or sr:
             from .dicom_io import study_dirs, unique_frames
             frames = {}
             for s in study_dirs(data_dir):
                 for fr in unique_frames(s)[0]:
                     frames[fr.image_uid] = fr
-            write_overlays(rows, frames, job.workdir / 'overlays.zip')
+            if overlays:
+                write_overlays(rows, frames, job.workdir / 'overlays.zip')
+            if sr:
+                write_sr(rows, frames, job.workdir / 'sr.zip')
         job.summary = summary(rows)
         job.state = 'done'
     except Exception as e:
@@ -214,6 +219,35 @@ async def analyze_overlay(file: UploadFile = File(...)) -> StreamingResponse:
     return StreamingResponse(buf, media_type='image/png')
 
 
+@app.post('/analyze/sr')
+async def analyze_sr(file: UploadFile = File(...)) -> StreamingResponse:
+    """Тот же кадр, но DICOM SR с текстовым заключением (ТЗ 2.6).
+
+    SR ссылается на исходный снимок и наследует теги пациента и исследования,
+    поэтому PACS покажет его в том же исследовании.
+    """
+    import pydicom
+
+    from .dicom_sr import build_sr
+    data = await file.read()
+    try:
+        src = pydicom.dcmread(io.BytesIO(data), stop_before_pixels=True)
+        px = _read_upload(data)
+    except Exception as e:
+        raise HTTPException(400, f'не удалось прочитать DICOM: {e}')
+    try:
+        res = analyzer().analyze_pixels(px)
+        sr = build_sr(src, res, VIOLATIONS, REGION_RU)
+        buf = io.BytesIO()
+        sr.save_as(buf, enforce_file_format=True)
+    except Exception as e:
+        raise HTTPException(500, f'не удалось построить SR: {type(e).__name__}: {e}')
+    buf.seek(0)
+    name = Path(file.filename or 'image').stem
+    return StreamingResponse(buf, media_type='application/dicom',
+                             headers={'Content-Disposition': f'attachment; filename="{name}.sr.dcm"'})
+
+
 # --------------------------------------------------------------------------- #
 #  Пачка
 # --------------------------------------------------------------------------- #
@@ -222,6 +256,7 @@ async def batch(background: BackgroundTasks,
                 file: UploadFile = File(..., description='zip с исследованиями'),
                 fmt: str = Query('xlsx', pattern='^(xlsx|csv)$'),
                 overlays: bool = Query(False, description='приложить zip с визуализацией'),
+                sr: bool = Query(False, description='приложить zip с DICOM SR'),
                 wait: bool = Query(False, description='дождаться результата в этом же запросе')):
     """Zip с исследованиями -> задание на пакетную обработку."""
     job = Job(id=uuid.uuid4().hex[:12])
@@ -239,9 +274,9 @@ async def batch(background: BackgroundTasks,
     JOBS[job.id] = job
 
     if wait:
-        _run_job(job, data, fmt, overlays)
+        _run_job(job, data, fmt, overlays, sr)
         return JSONResponse(job.public())
-    background.add_task(_run_job, job, data, fmt, overlays)
+    background.add_task(_run_job, job, data, fmt, overlays, sr)
     return JSONResponse(job.public(), status_code=202)
 
 
@@ -287,3 +322,8 @@ def job_details(job_id: str) -> FileResponse:
 @app.get('/jobs/{job_id}/overlays')
 def job_overlays(job_id: str) -> FileResponse:
     return _artifact(job_id, ['overlays.zip'], 'application/zip', f'overlays_{job_id}')
+
+
+@app.get('/jobs/{job_id}/sr')
+def job_sr(job_id: str) -> FileResponse:
+    return _artifact(job_id, ['sr.zip'], 'application/zip', f'sr_{job_id}')

@@ -116,3 +116,39 @@ def write_overlays(rows: list[dict], frames_by_uid: dict, path: str | Path) -> P
             name = f"{r.get('path_to_study', 'study')}/{r.get('file_name', r.get('image_uid'))}.png"
             z.writestr(name.replace('\\', '/'), buf.getvalue())
     return p
+
+
+def write_sr(rows: list[dict], frames_by_uid: dict, path: str | Path) -> Path:
+    """Zip с DICOM SR на каждый обработанный кадр (ТЗ 2.6).
+
+    В отличие от оверлеев, SR пишется и для качественных кадров: вывод
+    «нарушений не обнаружено» — тоже заключение, и PACS должен его видеть
+    рядом со снимком. Заголовок исходного DICOM перечитывается без пикселей —
+    теги пациента и исследования в Frame не хранятся.
+    """
+    import io
+
+    import pydicom
+
+    from .dicom_sr import build_sr
+    from .pipeline import REGION_RU, VIOLATIONS
+
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(p, 'w', zipfile.ZIP_DEFLATED) as z:
+        for i, r in enumerate(rows, 1):
+            if r.get('processing_status') != 'Success':
+                continue
+            frame = frames_by_uid.get(r.get('image_uid'))
+            if frame is None:
+                continue
+            try:
+                src = pydicom.dcmread(str(frame.path), stop_before_pixels=True)
+                sr = build_sr(src, r, VIOLATIONS, REGION_RU, instance_number=i)
+                buf = io.BytesIO()
+                sr.save_as(buf, enforce_file_format=True)
+            except Exception:
+                continue                     # SR — дополнительная серия, отчёт важнее
+            name = f"{r.get('path_to_study', 'study')}/{r.get('file_name', r.get('image_uid'))}.sr.dcm"
+            z.writestr(name.replace('\\', '/'), buf.getvalue())
+    return p

@@ -46,7 +46,8 @@ batch)
         python -m service.cli /data \
             --out "/out/report.${FMT}" \
             --details /out/details.json \
-            --overlays /out/overlays.zip
+            --overlays /out/overlays.zip \
+            --sr /out/sr.zip
     ;;
 *)
     echo "использование: $0 [serve|batch <папка>]" >&2

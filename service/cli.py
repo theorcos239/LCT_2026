@@ -4,11 +4,13 @@
     python -m service.cli НД_для_обучения/Исследования --out report.xlsx
     python -m service.cli исследования.zip --out report.csv --overlays overlays.zip
     python -m service.cli одно_исследование/ --out report.csv --details details.json
+    python -m service.cli исследования/ --out report.xlsx --sr sr.zip
     python -m service.cli снимок.dcm --json
 
 На вход принимается папка с исследованиями, одно исследование, отдельный файл
 или zip-архив. На выходе — таблица в формате ТЗ 2.5 и, по запросу, архив с
-визуализацией нарушений и JSON со всеми измерениями.
+визуализацией нарушений, JSON со всеми измерениями и zip с DICOM SR
+(текстовое заключение по каждому кадру, ТЗ 2.6).
 """
 from __future__ import annotations
 
@@ -29,6 +31,7 @@ def main(argv: list[str] | None = None) -> int:
                     help='итоговая таблица .xlsx или .csv (по умолчанию report.xlsx)')
     ap.add_argument('--overlays', type=Path, help='zip с визуализацией нарушений')
     ap.add_argument('--details', type=Path, help='JSON со всеми измерениями')
+    ap.add_argument('--sr', type=Path, help='zip с DICOM SR (Basic Text SR) на каждый кадр')
     ap.add_argument('--hip-method', default='kit2', choices=('kit0', 'kit1', 'kit2', 'kit3'),
                     help='комплект hip_roi для отступов бедра')
     ap.add_argument('--lenient-region', action='store_true',
@@ -44,7 +47,7 @@ def main(argv: list[str] | None = None) -> int:
 
     from .dicom_io import extract_archive
     from .pipeline import Analyzer, process_batch
-    from .report import summary, write_details, write_overlays, write_table
+    from .report import summary, write_details, write_overlays, write_sr, write_table
 
     target = Path(args.target)
     if not target.exists():
@@ -76,14 +79,17 @@ def main(argv: list[str] | None = None) -> int:
     write_table(rows, args.out)
     if args.details:
         write_details(rows, args.details)
-    if args.overlays:
+    if args.overlays or args.sr:
         # кадры перечитываются: держать 252 массива в памяти ради архива не нужно
         from .dicom_io import study_dirs, unique_frames
         frames = {}
         for s in study_dirs(target):
             for fr in unique_frames(s)[0]:
                 frames[fr.image_uid] = fr
-        write_overlays(rows, frames, args.overlays)
+        if args.overlays:
+            write_overlays(rows, frames, args.overlays)
+        if args.sr:
+            write_sr(rows, frames, args.sr)
 
     s = summary(rows)
     s['wall_seconds'] = round(time.perf_counter() - t0, 2)
