@@ -78,12 +78,17 @@ def _risk_score(vtype: str, details: dict) -> float:
     return float('nan')
 
 
-def run(hip_method: str = 'kit2') -> pd.DataFrame:
-    """Прогон конвейера по всем уникальным кадрам обучающего набора."""
+def run(hip_method: str = 'kit2', keypoints: bool = False) -> pd.DataFrame:
+    """Прогон конвейера по всем уникальным кадрам обучающего набора.
+
+    keypoints=True считает ось позвоночника и отступы ROI моделью ключевых
+    точек. Сравнивать два прогона осмысленно: набор кадров и метки одни и те
+    же, меняется только измеритель.
+    """
     from .pipeline import Analyzer
 
     df = trainset.frames()
-    a = Analyzer.load(hip_method=hip_method)
+    a = Analyzer.load(hip_method=hip_method, keypoints=keypoints)
     rows = []
     for r in df.itertuples():
         px = trainset.read(r.rel_path)
@@ -185,9 +190,12 @@ def main() -> int:
     ap.add_argument('--quick', action='store_true', help='без бутстрэпа')
     ap.add_argument('--hip-method', default='kit2')
     ap.add_argument('--no-save', action='store_true')
+    ap.add_argument('--keypoints', action='store_true',
+                    help='ось и отступы ROI считать моделью ключевых точек')
+    ap.add_argument('--out', type=Path, default=METRICS, help='куда положить метрики')
     args = ap.parse_args()
 
-    d = run(args.hip_method)
+    d = run(args.hip_method, keypoints=args.keypoints)
     print(f'{len(d)} кадров, {d.study.nunique()} исследований, '
           f'ошибок {(d.status == "Failure").sum()}')
     res = evaluate(d, n_boot=0 if args.quick else 2000)
@@ -219,12 +227,15 @@ def main() -> int:
 
     if not args.no_save:
         res['oof_reference'] = ref
-        METRICS.write_text(json.dumps(res, ensure_ascii=False, indent=2, default=float),
-                           encoding='utf-8')
+        args.out.write_text(json.dumps(res, ensure_ascii=False, indent=2, default=float),
+                            encoding='utf-8')
+        # Таблица кадров ложится рядом с метриками: прогон другим измерителем
+        # не должен затирать зафиксированную базовую линию в service/.
+        frames = args.out.parent / 'evaluation.csv'
         d.drop(columns=['violations', 'details']).assign(
             violations=d.violations.apply(';'.join)).to_csv(
-            HERE / 'evaluation.csv', index=False, encoding='utf-8')
-        print(f'\nсохранено: {METRICS.name}, evaluation.csv')
+            frames, index=False, encoding='utf-8')
+        print(f'\nсохранено: {args.out}, {frames}')
     return 0
 
 

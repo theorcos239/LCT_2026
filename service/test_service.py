@@ -217,6 +217,54 @@ def test_api() -> None:
     check('POST /analyze отвергает мусор', r.status_code == 400)
 
 
+def test_keypoints() -> None:
+    """Модель ключевых точек: выключена по умолчанию, включённая не меняет формат.
+
+    Главное, что проверяется, — отсутствие модели не ломает сервис: без torch
+    или без весов кадр обязан посчитаться контурной геометрией, а причина —
+    попасть во флаг, а не потеряться.
+    """
+    from .pipeline import Analyzer, process_study
+    study = sorted(DATA.iterdir())[0]
+
+    check('по умолчанию модель точек выключена', Analyzer.load().keypoints is None)
+
+    missing = Analyzer.load(keypoints=True, keypoints_dir=Path(tempfile.gettempdir()) / 'нет_весов')
+    rows = process_study(study, missing, 's')
+    check('без весов кадры считаются и помечаются флагом',
+          all(r['processing_status'] == 'Success' for r in rows)
+          and any('keypoints:unavailable' in r['flags'] for r in rows))
+
+    a = Analyzer.load(keypoints=True)
+    if a.keypoints is None or not a.keypoints.available:
+        check('модель точек (пропущено: веса или torch недоступны)', True)
+        return
+
+    base = {r['image_uid']: r for r in process_study(study, Analyzer.load(), 's')}
+    rows = process_study(study, a, 's')
+    check('с моделью точек формат строки не меняется',
+          all(set(r) >= set(base[r['image_uid']]) for r in rows))
+    check('с моделью точек нет необработанных исключений',
+          all(r['processing_status'] == 'Success' for r in rows))
+
+    kp_rows = [r for r in rows if 'keypoints' in r['details']]
+    check('измерения по точкам попали в детали', bool(kp_rows))
+    spine = [r for r in rows if r['anatomical_region'] == 'spine']
+    hip = [r for r in rows if r['anatomical_region'] in ('lh', 'rh')]
+    check('у позвоночника ось посчитана точками',
+          all(r['details']['spine']['axis'].get('source') == 'keypoints' for r in spine),
+          f'кадров {len(spine)}')
+    check('у бедра отступы посчитаны точками и контур сохранён',
+          all(r['details']['hip_roi']['method'] == 'keypoints'
+              and 'hip_roi_contour' in r['details'] for r in hip),
+          f'кадров {len(hip)}')
+
+    r2 = process_study(study, a, 's')
+    keys = ('anatomical_region', 'quality_class', 'violation_type')
+    check('повторный прогон с точками даёт то же самое',
+          [{k: r[k] for k in keys} for r in rows] == [{k: r[k] for k in keys} for r in r2])
+
+
 # --------------------------------------------------------------------------- #
 def main() -> int:
     ap = argparse.ArgumentParser(description='Тесты сервиса контроля качества DXA')
@@ -241,6 +289,8 @@ def main() -> int:
             test_dedup_and_regions()
             test_determinism()
             test_timing()
+            print('модель ключевых точек')
+            test_keypoints()
 
     print(f'\nпройдено {len(PASS)}, провалено {len(FAIL)}')
     for f in FAIL:

@@ -28,6 +28,7 @@
 from __future__ import annotations
 
 import io
+import os
 import shutil
 import tempfile
 import threading
@@ -59,11 +60,18 @@ JOBS_DIR = Path(tempfile.gettempdir()) / 'dxa_qc_jobs'
 
 
 def analyzer() -> Analyzer:
-    """Модели грузятся один раз на процесс: чтение весов дороже самого анализа."""
+    """Модели грузятся один раз на процесс: чтение весов дороже самого анализа.
+
+    DXA_QC_KEYPOINTS=1 подключает модель ключевых точек (нужен torch и веса в
+    runs/keypoints). Переменной окружения, а не параметра запроса: веса читаются
+    при старте процесса, переключать измеритель между запросами нечестно —
+    отчёты станут несравнимы между собой.
+    """
     global _analyzer
     with _lock:
         if _analyzer is None:
-            _analyzer = Analyzer.load()
+            _analyzer = Analyzer.load(
+                keypoints=os.environ.get('DXA_QC_KEYPOINTS', '') not in ('', '0', 'false'))
     return _analyzer
 
 

@@ -40,6 +40,13 @@ COPY spine_qc/ spine_qc/
 COPY service/ service/
 COPY stats.py trainset.py folds.csv ./
 
+# Код модели ключевых точек (десятки КБ) — без него флаг --keypoints не
+# заработал бы даже при смонтированных весах и torch. torch и веса
+# (runs/keypoints, requirements-train.txt) в образ сознательно не входят:
+# базовый образ остаётся 162 МБ, флаг по умолчанию выключен и без них просто
+# недоступен (см. README, «Модель ключевых точек»).
+COPY src/ src/
+
 # Непривилегированный пользователь: сервис читает медицинские изображения,
 # root внутри контейнера ему не нужен.
 RUN useradd --create-home --uid 10001 dxa && \

@@ -33,6 +33,11 @@ def main(argv: list[str] | None = None) -> int:
                     help='комплект hip_roi для отступов бедра')
     ap.add_argument('--lenient-region', action='store_true',
                     help='оценивать кадры, не принятые фильтром области')
+    ap.add_argument('--keypoints', action='store_true',
+                    help='ось позвоночника и отступы ROI считать моделью ключевых '
+                         'точек (нужен torch и веса в runs/keypoints)')
+    ap.add_argument('--keypoints-dir', type=Path,
+                    help='каталог с весами модели точек (по умолчанию runs/keypoints)')
     ap.add_argument('--json', action='store_true', help='сводку вывести как JSON')
     ap.add_argument('--quiet', action='store_true')
     args = ap.parse_args(argv)
@@ -53,7 +58,12 @@ def main(argv: list[str] | None = None) -> int:
 
     t0 = time.perf_counter()
     analyzer = Analyzer.load(hip_method=args.hip_method,
-                             strict_region=not args.lenient_region)
+                             strict_region=not args.lenient_region,
+                             keypoints=args.keypoints,
+                             keypoints_dir=args.keypoints_dir)
+    if args.keypoints and analyzer.keypoints is not None and not analyzer.keypoints.available:
+        print(f'модель точек не загружена: {analyzer.keypoints.error}\n'
+              'кадры будут посчитаны контурной геометрией', file=sys.stderr)
 
     def progress(i, n, study):
         if not args.quiet:

@@ -17,6 +17,9 @@ from .dataset import normalize, pad_to_multiple
 from .heatmaps import decode
 from .model import KeypointNet
 
+# Каталог прогона по умолчанию — тот же, что train.out_dir в configs/keypoints.yaml.
+RUN_DIR = Path(__file__).resolve().parents[2] / "runs" / "keypoints"
+
 
 def _rotate(x: torch.Tensor, degrees: float) -> torch.Tensor:
     if degrees == 0:
@@ -82,3 +85,23 @@ class Predictor:
             "visible": visible,
             "region": region if visible[self.regions[region]].any() else "out_of_scope",
         }
+
+
+def fold_checkpoints(run_dir: str | Path | None = None) -> list[Path]:
+    """Лучшие веса каждого фолда в каталоге прогона.
+
+    `fold{N}_last.pt` — это состояние для продолжения обучения (оптимизатор,
+    расписание, история), в ансамбль оно не идёт: там веса последней эпохи, а
+    не лучшей.
+    """
+    d = Path(run_dir) if run_dir is not None else RUN_DIR
+    return sorted(p for p in d.glob("fold*.pt") if not p.name.endswith("_last.pt"))
+
+
+def load_predictor(run_dir: str | Path | None = None, device: str = "cpu") -> Predictor:
+    """Ансамбль всех обученных фолдов из каталога прогона."""
+    ckpts = fold_checkpoints(run_dir)
+    if not ckpts:
+        raise FileNotFoundError(
+            f"в {Path(run_dir) if run_dir is not None else RUN_DIR} нет весов fold*.pt")
+    return Predictor(ckpts, device)
