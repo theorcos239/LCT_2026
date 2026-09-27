@@ -42,10 +42,14 @@ augment:
   p_hflip_spine: 0.5
 train:
   folds:
+  - 0
   - 1
+  - 2
+  - 3
+  - 4
   epochs: 600
   batch_size: 16
-  num_workers: 4
+  num_workers: 0
   lr_encoder: 3.0e-05
   lr_decoder: 0.0003
   weight_decay: 0.0001
