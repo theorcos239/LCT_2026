@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 # Запуск сервиса контроля качества DXA (ТЗ 3.2).
 #
-#   ./run.sh                              поднять API на localhost:8000
+#   ./run.sh                              веб-интерфейс и API на localhost:8000
 #   ./run.sh batch /путь/к/исследованиям  пакетная обработка, отчёт в ./out
 #   PORT=9000 ./run.sh                    другой порт
 #
@@ -26,7 +26,8 @@ fi
 
 case "$MODE" in
 serve)
-    echo "API на http://localhost:${PORT}  (документация: /docs, проверка: /health)"
+    echo "Интерфейс:    http://localhost:${PORT}"
+    echo "API:          http://localhost:${PORT}/docs  (проверка: /health)"
     exec docker run --rm -it -p "${PORT}:8000" --name dxa-qc "${IMAGE}:${TAG}"
     ;;
 batch)
