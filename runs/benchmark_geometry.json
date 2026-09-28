@@ -1,0 +1,28 @@
+{
+  "studies": 100,
+  "frames": 252,
+  "failures": 0,
+  "cnn": false,
+  "model_load_s": 0.48,
+  "total_s": 7.5,
+  "per_study_s": {
+    "median": 0.084,
+    "p95": 0.104,
+    "max": 0.143
+  },
+  "per_frame_s": {
+    "median": 0.027,
+    "p95": 0.034,
+    "max": 0.045
+  },
+  "threads": {
+    "OMP_NUM_THREADS": "1",
+    "OPENBLAS_NUM_THREADS": "1"
+  },
+  "machine": {
+    "cpu": "Intel64 Family 6 Model 198 Stepping 2, GenuineIntel",
+    "cores": 24,
+    "python": "3.14.2",
+    "system": "Windows"
+  }
+}

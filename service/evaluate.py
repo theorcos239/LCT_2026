@@ -22,10 +22,10 @@
 отклонение от коридора нормы и т.п.), а не бинарное решение конвейера —
 ранговая AUC на 0/1-скоре математически совпадает со сбалансированной
 точностью и не проверяет ничего сверх неё. Для агрегатов «по области» и
-«в целом» такой общей шкалы нет (критерии в разных единицах), там AUC
-действительно вырождается в сбалансированную точность — это не ошибка, а
-следствие того, что бинарный вердикт «есть хоть одно нарушение» не сводится к
-одному числу.
+«в целом» критерии в разных единицах сводятся через калиброванные
+вероятности: у каждого критерия своя логистическая калибровка Платта, свод —
+`quality_probability = 1 - П(1 - p)`, та же колонка, что в отчёте. Кадр без
+вероятности (ни один критерий не измерился) откатывается на вердикт.
 """
 from __future__ import annotations
 
@@ -64,22 +64,25 @@ def _risk_score(vtype: str, details: dict) -> float:
             return abs(details['spine']['axis']['angle_deg'])
         if vtype == 'spine_position':
             return -details['spine']['position']['iliac_area']
+        # Где вердикт выносит свод с сетью (cnn_qc), скор — вероятность свода:
+        # иначе AUC мерила бы не то, по чему принято решение.
         if vtype == 'spine_artifacts':
-            return details['spine']['artifacts']['score']
+            a = details['spine']['artifacts']
+            return a['probability'] if a.get('p_cnn') is not None else a['score']
         if vtype == 'hip_rotation':
-            return details['hip_rotation']['corridor_distance']
+            r = details['hip_rotation']
+            return r['probability'] if r.get('p_cnn') is not None else r['corridor_distance']
         if vtype == 'hip_roi':
-            from hip_roi.geometry import BOTTOM_MM, LAT_MM, TOP_MM
-            r = details['hip_roi']
-            return max(TOP_MM - r['m_top_mm'], BOTTOM_MM - r['m_bottom_mm'],
-                      LAT_MM - r['m_lat_mm'])
+            from hip_roi.probability import shortfall
+            v = shortfall(details['hip_roi'])
+            return float('nan') if v is None else v
     except (KeyError, TypeError):
         pass
     return float('nan')
 
 
 def run(hip_method: str = 'kit2', keypoints: bool = False,
-        keypoints_oof: bool = False) -> pd.DataFrame:
+        keypoints_oof: bool = False, cnn: bool = True) -> pd.DataFrame:
     """Прогон конвейера по всем уникальным кадрам обучающего набора.
 
     keypoints=True считает ось позвоночника и отступы ROI моделью ключевых
@@ -90,12 +93,18 @@ def run(hip_method: str = 'kit2', keypoints: bool = False,
     фолда, который этот кадр в обучении не видел. Ансамбль всех фолдов на
     обучающем наборе — оценка на данных обучения: разметка точек есть у всех
     242 кадров pack, и каждый из них видели четыре модели из пяти.
+
+    cnn=True — свод с нейросетью (cnn_qc) как в рабочем сервисе, но вероятность
+    сети — out-of-fold (cnn_qc/<критерий>/oof.csv): поставляемая модель обучена
+    на всех этих кадрах, и её оценка на них ничего бы не значила. cnn=False —
+    одна геометрия, базовая линия до сети.
     """
     from .keypoints_backend import KeypointBackend
     from .pipeline import Analyzer
 
     df = trainset.frames()
-    a = Analyzer.load(hip_method=hip_method, keypoints=keypoints or keypoints_oof)
+    a = Analyzer.load(hip_method=hip_method, keypoints=keypoints or keypoints_oof,
+                      cnn=False, cnn_oof=cnn)
     by_fold = {}
     if keypoints_oof:
         for k in sorted(df.fold.unique()):
@@ -114,16 +123,26 @@ def run(hip_method: str = 'kit2', keypoints: bool = False,
             res = a.analyze_pixels(px)
             status, err = 'Success', ''
         except Exception as e:
-            res = {'anatomical_region': 'unknown', 'violations': [], 'flags': []}
+            res = {'anatomical_region': 'unknown', 'violations': [], 'flags': [],
+                   'quality_probability': None}
             status, err = 'Failure', f'{type(e).__name__}: {e}'
         rows.append({
             'study': r.study, 'rel_path': r.rel_path, 'expert_region': r.label,
             'region': res['anatomical_region'], 'violations': res['violations'],
             'flags': ';'.join(res['flags']), 'status': status, 'error': err,
             'seconds': time.perf_counter() - t0, 'details': res.get('details', {}),
+            'quality_probability': res.get('quality_probability'),
             **{f'y_{c}': getattr(r, f'y_{c}') for c in trainset.CRITERIA},
         })
     return pd.DataFrame(rows)
+
+
+def _binary_score(sub: pd.DataFrame, pred: np.ndarray) -> np.ndarray:
+    """Скор бинарного класса: quality_probability, без неё — вердикт."""
+    if 'quality_probability' not in sub:
+        return pred.astype(float)
+    q = pd.to_numeric(sub.quality_probability, errors='coerce').values.astype(float)
+    return np.where(np.isfinite(q), q, pred.astype(float))
 
 
 def evaluate(d: pd.DataFrame, n_boot: int = 2000) -> dict:
@@ -157,7 +176,7 @@ def evaluate(d: pd.DataFrame, n_boot: int = 2000) -> dict:
             continue
         y = (sub[cols].sum(axis=1) > 0).astype(int).values
         pred = sub.violations.apply(lambda v: int(bool(v))).values
-        m = stats.evaluate(y, pred, pred.astype(float), sub.study.values, n_boot=n_boot)
+        m = stats.evaluate(y, pred, _binary_score(sub, pred), sub.study.values, n_boot=n_boot)
         m['positives'] = int(y.sum())
         m['images'] = int(len(sub))
         out['per_region'][name] = m
@@ -167,7 +186,7 @@ def evaluate(d: pd.DataFrame, n_boot: int = 2000) -> dict:
     sub = d[known]
     y = (sub[all_cols].fillna(0).sum(axis=1) > 0).astype(int).values
     pred = sub.violations.apply(lambda v: int(bool(v))).values
-    m = stats.evaluate(y, pred, pred.astype(float), sub.study.values, n_boot=n_boot)
+    m = stats.evaluate(y, pred, _binary_score(sub, pred), sub.study.values, n_boot=n_boot)
     m['positives'] = int(y.sum())
     m['images'] = int(len(sub))
     out['overall']['binary_quality_class'] = m
@@ -179,6 +198,124 @@ def evaluate(d: pd.DataFrame, n_boot: int = 2000) -> dict:
     out['overall']['failed'] = int((d.status == 'Failure').sum())
     out['overall']['seconds_per_image_median'] = float(d.seconds.median())
     out['overall']['seconds_per_image_p95'] = float(d.seconds.quantile(0.95))
+    return out
+
+
+def honest(d: pd.DataFrame, n_boot: int = 2000, cnn: bool = True) -> dict:
+    """Честная оценка всего конвейера: каждый вердикт — out-of-fold.
+
+    evaluate() считает метрики с порогами, подобранными на этой же выборке, —
+    это оценка сверху. Здесь каждый критерий взят в том виде, в каком его
+    решение не видело отложенного фолда:
+
+    * позвоночник (укладка, ось, артефакты без сети) — порог подобран на
+      обучающих фолдах (spine_qc.calibrate.out_of_fold);
+    * ротация и артефакты с сетью — вложенный свод cnn_qc: и сеть, и
+      коэффициенты свода, и порог учились без отложенного фолда (oof.csv);
+    * ротация без сети — коридор нормы по обучающим фолдам;
+    * отступы ROI — пороги ТЗ (3 / 3 / 2 см), ничего не подбиралось.
+
+    Бинарный класс кадра — «хоть одно нарушение» по этим OOF-вердиктам. Его
+    ROC-AUC — по своду OOF-вероятностей критериев 1 - П(1 - p).
+    """
+    from hip_rotation import THRESHOLDS as ROT
+    from hip_rotation.detect import corridor_distance
+    from spine_qc import probability as prob
+    from spine_qc.calibrate import geometry_score, measure, out_of_fold
+
+    root = HERE.parent
+    # pred — OOF-вердикт, score — непрерывная величина для AUC критерия,
+    # probs — вероятность для свода по кадру
+    pred, score, probs = {}, {}, {}
+
+    ds, X = measure(trainset.frames('spine'))
+    oof_pred, _, _, oof_prob = out_of_fold(ds, X)
+    for name, key in (('position', 'spine_position'), ('axis', 'spine_axis'),
+                      ('artifacts', 'spine_artifacts')):
+        pred[key] = dict(zip(ds.rel_path, oof_pred[name]))
+        score[key] = dict(zip(ds.rel_path, geometry_score(name, ds)))
+        probs[key] = dict(zip(ds.rel_path, oof_prob[name]))
+
+    m = pd.read_csv(root / 'hip_rotation' / 'measurements.csv')
+    q = float(ROT.get('corridor_percentile', 15.0))
+    pred['hip_rotation'], score['hip_rotation'], probs['hip_rotation'] = {}, {}, {}
+    for k in sorted(m.fold.unique()):
+        te = m.fold == k
+        lo, hi = np.percentile(m.area_mm2[~te & (m.y == 0)].dropna(), [q, 100.0 - q])
+        for r in m[te].itertuples():
+            ok = np.isfinite(r.area_mm2)
+            dist = corridor_distance(r.area_mm2, {'area_lo': lo, 'area_hi': hi}) if ok else np.nan
+            pred['hip_rotation'][r.rel_path] = int(ok and dist > 0)
+            score['hip_rotation'][r.rel_path] = dist
+            probs['hip_rotation'][r.rel_path] = prob.apply(ROT.get('probability'), dist) if ok else None
+
+    # С сетью: вердикт — вложенный свод (сеть, свод и порог без отложенного
+    # фолда); скор — OOF-вероятность сети в своде с тремя коэффициентами по
+    # всем OOF. Склеенные вероятности пяти вложенных сводов ранжируются хуже
+    # любого из них, поэтому для AUC берётся p_stack (см. cnn_qc/train.py).
+    for crit, key in (('rotation', 'hip_rotation'), ('artifacts', 'spine_artifacts')):
+        f = root / 'cnn_qc' / crit / 'oof.csv'
+        if cnn and f.exists():
+            o = pd.read_csv(f)
+            pred[key] = dict(zip(o.rel_path, o.pred_nested.astype(int)))
+            col = 'p_verdict' if 'p_verdict' in o else 'p_stack'
+            score[key] = dict(zip(o.rel_path, o[col]))
+            probs[key] = dict(zip(o.rel_path, o[col]))
+
+    from hip_roi import probability as roi_prob
+    pred['hip_roi'] = {r.rel_path: int('hip_roi' in r.violations) for r in d.itertuples()}
+    score['hip_roi'] = {r.rel_path: _risk_score('hip_roi', r.details) for r in d.itertuples()}
+    probs['hip_roi'] = {k: (prob.apply(roi_prob.PARAMS, v) if np.isfinite(v) else None)
+                        for k, v in score['hip_roi'].items()}
+
+    out: dict = {'per_violation': {}, 'per_region': {}, 'overall': {}}
+    frame_pred = {r: 0 for r in d.rel_path}
+    frame_prob: dict = {r: [] for r in d.rel_path}
+    for vtype, (region, col) in CRITERIA.items():
+        sel = d.expert_region.isin(('lh', 'rh')) if region == 'hip' else (d.expert_region == region)
+        sub = d[sel & d[col].notna()]
+        y = sub[col].values.astype(int)
+        pv = np.array([pred[vtype].get(r, 0) for r in sub.rel_path], int)
+        sc = np.array([score[vtype].get(r, np.nan) for r in sub.rel_path], float)
+        sc = np.where(np.isfinite(sc), sc, pv.astype(float))
+        mm = stats.evaluate(y, pv, sc, sub.study.values, n_boot=n_boot)
+        mm['positives'] = int(y.sum())
+        out['per_violation'][vtype] = mm
+        for r, v in zip(sub.rel_path, pv):
+            frame_pred[r] |= int(v)
+        for r in d.rel_path[sel]:
+            v = probs[vtype].get(r)
+            if v is not None and np.isfinite(v):
+                frame_prob[r].append(float(v))
+
+    def binary(sub: pd.DataFrame, cols: list[str]) -> dict:
+        y = (sub[cols].fillna(0).sum(axis=1) > 0).astype(int).values
+        pv = np.array([frame_pred[r] for r in sub.rel_path], int)
+        pq = np.array([prob.combine(frame_prob[r]) if frame_prob[r] else np.nan
+                       for r in sub.rel_path], float)
+        mm = stats.evaluate(y, pv, np.where(np.isfinite(pq), pq, pv), sub.study.values,
+                            n_boot=n_boot)
+        mm['positives'], mm['images'] = int(y.sum()), int(len(sub))
+        return mm
+
+    for region in ('spine', 'hip'):
+        sel = d.expert_region.isin(('lh', 'rh')) if region == 'hip' else (d.expert_region == region)
+        cols = [c for v, (r, c) in CRITERIA.items() if r == region]
+        sub = d[sel]
+        sub = sub[sub[cols].notna().all(axis=1)]
+        out['per_region'][region] = binary(sub, cols)
+    all_cols = [c for _, c in CRITERIA.values()]
+    out['overall']['binary_quality_class'] = binary(d[d[all_cols].notna().any(axis=1)], all_cols)
+    out['overall']['macro_f1'] = float(np.mean([v['f1'] for v in out['per_violation'].values()]))
+    out['sources'] = {
+        'spine_position': 'порог по обучающим фолдам',
+        'spine_axis': 'порог по обучающим фолдам',
+        'spine_artifacts': ('вложенный свод cnn_qc' if cnn and (root / 'cnn_qc' / 'artifacts' / 'oof.csv').exists()
+                            else 'порог по обучающим фолдам'),
+        'hip_rotation': ('вложенный свод cnn_qc' if cnn and (root / 'cnn_qc' / 'rotation' / 'oof.csv').exists()
+                         else 'коридор по обучающим фолдам'),
+        'hip_roi': 'пороги ТЗ, без подбора',
+    }
     return out
 
 
@@ -210,10 +347,17 @@ def main() -> int:
                     help='ось и отступы ROI считать моделью ключевых точек (ансамбль)')
     ap.add_argument('--keypoints-oof', action='store_true',
                     help='то же, но каждый кадр считает модель фолда, не видевшая его')
+    ap.add_argument('--no-cnn', action='store_true',
+                    help='без нейросети cnn_qc: вердикт по одной геометрии (базовая линия)')
     ap.add_argument('--out', type=Path, default=METRICS, help='куда положить метрики')
     args = ap.parse_args()
 
-    d = run(args.hip_method, keypoints=args.keypoints, keypoints_oof=args.keypoints_oof)
+    d = run(args.hip_method, keypoints=args.keypoints, keypoints_oof=args.keypoints_oof,
+            cnn=not args.no_cnn)
+    cnn_flags = int(d['flags'].str.contains('cnn:').sum())
+    if cnn_flags:
+        print(f'у {cnn_flags} кадров нет вердикта сети (флаг cnn:*): в OOF-режиме это кадры '
+              'без метки эксперта — их нет в обучающей выборке сети')
     print(f'{len(d)} кадров, {d.study.nunique()} исследований, '
           f'ошибок {(d.status == "Failure").sum()}')
     res = evaluate(d, n_boot=0 if args.quick else 2000)
@@ -230,6 +374,16 @@ def main() -> int:
     print(f"точность определения области: {o['region_accuracy']:.3f}")
     print(f"время на кадр: медиана {o['seconds_per_image_median']*1000:.0f} мс, "
           f"p95 {o['seconds_per_image_p95']*1000:.0f} мс")
+
+    hon = honest(d, n_boot=0 if args.quick else 2000, cnn=not args.no_cnn)
+    res['honest_oof'] = hon
+    print('\nчестная оценка всего конвейера (каждый вердикт out-of-fold):')
+    for k, m in hon['per_violation'].items():
+        print(f'  {k:16} {stats.fmt(m)}')
+    for k, m in hon['per_region'].items():
+        print(f'  {k:16} {stats.fmt(m)}')
+    print(f"  {'всего':16} {stats.fmt(hon['overall']['binary_quality_class'])}")
+    print(f"  macro-F1 {hon['overall']['macro_f1']:.3f}")
 
     ref = _oof_reference()
     if ref:
