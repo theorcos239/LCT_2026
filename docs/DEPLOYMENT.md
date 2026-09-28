@@ -9,13 +9,17 @@
 |---|---|---|
 | CPU | 2 ядра x86-64 | 4 ядра |
 | RAM | 2 ГБ | 4 ГБ |
-| диск | 1 ГБ (образ 175 МБ + временные задания) | + место под отчёты |
+| диск | 2 ГБ (образ 1.4 ГБ, из них 255 МБ — веса нейросети) | + место под отчёты |
 | GPU | не нужен | не нужен |
 | ПО | Docker 20+, POSIX sh | — |
 | сеть | не нужна после сборки образа | — |
 
-На целевой конфигурации ТЗ (2×H200) сервис использует только CPU. Скорость:
-~30 мс на снимок, исследование из трёх снимков ~0.1 с при лимите ТЗ 3 минуты.
+На целевой конфигурации ТЗ (2×H200) сервис использует только CPU: сеть
+`cnn_qc` исполняется onnxruntime. Скорость (`python -m service.benchmark`):
+444 мс на снимок, исследование из трёх снимков — 1.6 с (максимум
+2.3 с) при лимите ТЗ 3 минуты; в контейнере все 100 исследований обучающего
+набора с оверлеями и SR — 158 с. Без сети (`DXA_QC_CNN=0` или `--no-cnn`) —
+около 30 мс на снимок.
 
 ## Сборка
 
@@ -26,8 +30,9 @@ IMAGE=registry/dxa TAG=dev ./build.sh
 
 `build.sh` сначала проверяет, что веса моделей лежат в репозитории
 (`region_clf/model.joblib`, `spine_qc/model.joblib`,
-`spine_qc/thresholds.json`, `hip_rotation/thresholds.json`), и не соберёт
-образ без них — иначе сервис поднялся бы, но молча потерял критерии.
+`spine_qc/thresholds.json`, `hip_rotation/thresholds.json`,
+`hip_roi/probability.json`, `cnn_qc/*/model_*.onnx` и `meta.json`), и не
+соберёт образ без них — иначе сервис поднялся бы, но молча потерял критерии.
 
 Воспроизводимость сборки: базовый образ закреплён дайджестом
 (`FROM python:3.11-slim@sha256:…`), Python-пакеты ставятся из
@@ -99,9 +104,10 @@ docker run --rm --user "$(id -u):$(id -g)" \
 | `OUT` | run.sh batch | `./out` | каталог результатов |
 | `FMT` | run.sh batch | `xlsx` | `xlsx` или `csv` |
 | `IMAGE`, `TAG` | build.sh, run.sh | `dxa-qc`, `1.0.0` | имя образа |
+| `DXA_QC_CNN` | контейнер/процесс API | включено | `0` — выключить нейросетевое второе мнение (ротация и посторонние предметы только по геометрии) |
 | `DXA_QC_KEYPOINTS` | контейнер/процесс API | выключено | `1` — включить модель ключевых точек (нужны torch и веса, см. ниже) |
 | `DXA_QC_JOB_TTL_HOURS` | контейнер/процесс API | 24 | сколько часов хранить результаты завершённых заданий `/batch` |
-| `OMP_NUM_THREADS` и др. | Dockerfile | 1 | один поток BLAS — условие воспроизводимости, не менять |
+| `OMP_NUM_THREADS` и др. | Dockerfile | 1 | один поток BLAS (и onnxruntime — в коде) — условие воспроизводимости, не менять |
 
 ## Безопасность и данные
 
@@ -156,15 +162,15 @@ docker run -p 8000:8000 -v "$PWD/runs:/app/runs:ro" dxa-qc:keypoints
 ## Проверка после развёртывания
 
 ```bash
-curl -s localhost:8000/health
-curl -s localhost:8000/version            # пороги и версии моделей
+curl -s localhost:8000/health            # region_clf, spine_appearance, cnn_rotation, cnn_artifacts: true
+curl -s localhost:8000/version            # пороги, коридоры, свод и порог сети
 curl -s -F file=@снимок.dcm localhost:8000/analyze
 ```
 
 Полный набор тестов (нужен обучающий набор рядом с кодом, вне образа):
 
 ```bash
-python -m service.test_service            # формат, устойчивость, API, SR, детерминизм
+python -m service.test_service            # формат, устойчивость, API, SR, детерминизм, сеть
 python -m region_clf.test_region_clf
 python -m hip_roi.test_hip_roi
 ```

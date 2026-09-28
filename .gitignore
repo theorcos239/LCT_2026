@@ -19,3 +19,16 @@ runs/**
 !runs/eval_oof/metrics.json
 !runs/eval_ens/
 !runs/eval_ens/metrics.json
+# Базовая линия «только геометрия» (python -m service.evaluate --no-cnn) и её
+# скорость — с ними сравнивается сервис с нейросетью в README и презентации.
+!runs/eval_geometry/
+!runs/eval_geometry/metrics.json
+!runs/benchmark_geometry.json
+
+# Презентация: PNG слайдов — промежуточный рендер для PPTX
+docs/presentation/assets/slides/
+
+# Демо-архив (python docs/presentation/make_demo_zip.py)
+/demo.zip
+# Вариант HTML для публикации как Artifact (без обёртки html/head) — генерируется
+docs/presentation/slides.artifact.html

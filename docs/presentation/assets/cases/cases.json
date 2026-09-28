@@ -1,0 +1,91 @@
+{
+  "axis": {
+    "file": "axis.png",
+    "study": "2.25.220866240977467582196609708837940253840",
+    "rel_path": "2.25.220866240977467582196609708837940253840/series_001_2_CR/A2504258893 DXA/CR DXA/CR000000.dcm",
+    "region": "spine",
+    "violations": [
+      "spine_axis"
+    ],
+    "quality_probability": 0.6132,
+    "angle": 8.72,
+    "iliac": 0.0023,
+    "art_len": 7.8,
+    "art_p": 0.0052,
+    "art_prob": 0.0752
+  },
+  "artifacts": {
+    "file": "artifacts.png",
+    "study": "2.25.247714038039430659432048101646401574824",
+    "rel_path": "2.25.247714038039430659432048101646401574824/series_002_2_CR/A2504238024 DXA Exam/CR DXA Images/CR000002.dcm",
+    "region": "spine",
+    "violations": [
+      "spine_artifacts"
+    ],
+    "quality_probability": 0.9896,
+    "angle": 1.52,
+    "iliac": 0.0,
+    "art_len": 77.5,
+    "art_p": 1.0,
+    "art_prob": 0.9875
+  },
+  "rotation": {
+    "file": "rotation.png",
+    "study": "2.25.39068163399801173920284179500049527111",
+    "rel_path": "2.25.39068163399801173920284179500049527111/series_002_2_CR/A2504195842 DXA/CR DXA/CR000000.dcm",
+    "region": "rh",
+    "violations": [
+      "hip_rotation"
+    ],
+    "quality_probability": 0.9149,
+    "top": 38.2,
+    "bottom": 33.4,
+    "lat": 50.4,
+    "area": 7.9,
+    "rot_p": 0.9955,
+    "rot_prob": 0.9101
+  },
+  "roi": {
+    "file": "roi.png",
+    "study": "2.25.13069823278093578548407087310307113784",
+    "rel_path": "2.25.13069823278093578548407087310307113784/series_003_2_CR/A2507242667 DXA/CR DXA/CR000000.dcm",
+    "region": "lh",
+    "violations": [
+      "hip_roi"
+    ],
+    "quality_probability": 0.5335,
+    "top": 44.9,
+    "bottom": 18.2,
+    "lat": 26.1,
+    "area": 121.5,
+    "rot_p": 0.0217,
+    "rot_prob": 0.1209
+  },
+  "ok_spine": {
+    "file": "ok_spine.png",
+    "study": "2.25.156389075510671877606923458507011517218",
+    "rel_path": "2.25.156389075510671877606923458507011517218/series_001_2_CR/A2507389755 DXA/CR DXA/CR000002.dcm",
+    "region": "spine",
+    "violations": [],
+    "quality_probability": 0.1398,
+    "angle": -0.8,
+    "iliac": 0.1641,
+    "art_len": 17.8,
+    "art_p": 0.0027,
+    "art_prob": 0.0861
+  },
+  "ok_hip": {
+    "file": "ok_hip.png",
+    "study": "2.25.276415754443998872860614500027519740375",
+    "rel_path": "2.25.276415754443998872860614500027519740375/series_002_2_CR/A2504387089 DXA/CR DXA/CR000003.dcm",
+    "region": "lh",
+    "violations": [],
+    "quality_probability": 0.0404,
+    "top": 51.6,
+    "bottom": 57.1,
+    "lat": 60.1,
+    "area": 211.2,
+    "rot_p": 0.0006,
+    "rot_prob": 0.0384
+  }
+}
