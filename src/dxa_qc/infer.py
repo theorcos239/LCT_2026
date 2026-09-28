@@ -44,7 +44,7 @@ class Predictor:
             self.models.append(model)
             self.cfg, self.names = ckpt["config"], ckpt["names"]
         self.flip_perm = P.flip_permutation(self.names)
-        self.regions = P.region_slices(self.cfg["data"]["spine_edges"])
+        self.regions = P.from_config(self.cfg)[1]
         self.thresholds = self._load_thresholds(checkpoints)
 
     def _load_thresholds(self, checkpoints) -> np.ndarray:

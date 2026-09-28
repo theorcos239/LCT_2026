@@ -4,7 +4,7 @@ deterministic: true
 data:
   pack: data/keypoints.npz            # собирается python -m dxa_qc.pack
   folds: folds.csv
-  spine_edges: true                   # false → 13 точек позвоночника вместо 21
+  points: full                        # full: 29 каналов | core: 21 (без боковых краёв) | minimal: 14 (только те, что входят в критерии)
   canvas: [352, 320]                  # покрывает все обучающие снимки (максимум 349×300)
   mm_per_px: 0.6
   use_clahe: false                    # решается аблацией
