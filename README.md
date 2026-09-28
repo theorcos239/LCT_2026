@@ -305,7 +305,7 @@ PACS покажет заключение в том же исследовании
 ## API
 
 ```
-GET  /                       веб-интерфейс
+GET  /                       веб-интерфейс: загрузка, таблица, оверлеи (ТЗ 2.6)
 GET  /health                 жив ли сервис, загружены ли модели
 GET  /version                версии, пороги, коридоры
 GET  /taxonomy               перечень типов нарушений
@@ -313,6 +313,7 @@ POST /analyze                один DICOM → вердикт в JSON
 POST /analyze/overlay        один DICOM → PNG с визуализацией
 POST /analyze/sr             один DICOM → DICOM SR с заключением
 POST /batch                  zip с исследованиями → задание (202)
+                             ?overlays=true&all_frames=true — оверлеи и для качественных
 GET  /jobs, /jobs/{id}       список и статус заданий
 GET  /jobs/{id}/report       таблица .xlsx или .csv
 GET  /jobs/{id}/details      все измерения в JSON
@@ -369,7 +370,7 @@ torchvision 0.20.1, pyyaml — `requirements-train.txt`.
 
 ```bash
 ./build.sh                                # docker build, проверяет наличие весов
-./run.sh                                  # API на :8000
+./run.sh                                  # интерфейс и API на :8000
 ./run.sh batch /путь/к/исследованиям      # отчёт + details + overlays + sr в ./out
 PORT=9000 ./run.sh                        # другой порт
 ```
