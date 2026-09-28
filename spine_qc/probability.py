@@ -38,16 +38,26 @@ def apply(params: dict | None, score: float | None) -> float | None:
 
 
 def fit(y: np.ndarray, score: np.ndarray) -> dict | None:
-    """Коэффициенты Платта по обучающей выборке. Требует обоих классов."""
+    """Коэффициенты Платта по обучающей выборке. Требует обоих классов.
+
+    Скор перед подгонкой стандартизуется, а коэффициенты пересчитываются
+    обратно в его единицы. Без этого L2-регуляризация логистической регрессии
+    зависит от масштаба: у укладки скор — доля пикселей (~0.1), и штраф
+    прижимал вес к нулю — вероятность выходила одинаковой (0.06) у всех
+    кадров, а свод по позвоночнику ранжировал хуже голого вердикта.
+    """
     from sklearn.linear_model import LogisticRegression
 
     ok = np.isfinite(y) & np.isfinite(score)
     y, score = y[ok].astype(int), score[ok].astype(float)
     if len(np.unique(y)) < 2 or len(y) < 10:
         return None
+    mu, sd = float(score.mean()), float(score.std())
+    sd = sd if sd > 1e-12 else 1.0
     m = LogisticRegression(C=1.0, solver='lbfgs', max_iter=1000)
-    m.fit(score.reshape(-1, 1), y)
-    return {'w': round(float(m.coef_[0][0]), 6), 'b': round(float(m.intercept_[0]), 6)}
+    m.fit(((score - mu) / sd).reshape(-1, 1), y)
+    w, b = float(m.coef_[0][0]) / sd, float(m.intercept_[0]) - float(m.coef_[0][0]) * mu / sd
+    return {'w': round(w, 6), 'b': round(b, 6)}
 
 
 def brier(y: np.ndarray, p: np.ndarray) -> float:

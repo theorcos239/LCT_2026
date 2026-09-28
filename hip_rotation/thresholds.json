@@ -4,5 +4,9 @@
   "appearance": 0.5,
   "neck_mm": 14.0,
   "fit_mm": 55.0,
-  "corridor_percentile": 15.0
+  "corridor_percentile": 15.0,
+  "probability": {
+    "w": 0.019977,
+    "b": -1.685699
+  }
 }

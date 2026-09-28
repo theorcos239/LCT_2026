@@ -78,10 +78,12 @@ class Analyzer:
     hip_method: str = 'kit2'
     strict_region: bool = True      # непринятый кадр не отправляем на критерии
     keypoints: object = None        # модель ключевых точек; None — контурная геометрия
+    cnn: object = None              # cnn_qc: второе мнение по ротации и артефактам
 
     @classmethod
     def load(cls, hip_method: str = 'kit2', strict_region: bool = True,
-             keypoints: bool = False, keypoints_dir=None) -> 'Analyzer':
+             keypoints: bool = False, keypoints_dir=None, cnn: bool = True,
+             cnn_oof: bool = False) -> 'Analyzer':
         """keypoints=True подключает модель ключевых точек (`runs/keypoints`).
 
         Она забирает себе два измерения — угол оси позвоночника и отступы ROI
@@ -94,6 +96,13 @@ class Analyzer:
         """
         from region_clf import RegionClassifier
         from spine_qc import SpineQC
+        net = None
+        if cnn or cnn_oof:
+            try:
+                from cnn_qc import CnnQC, OofCnnQC
+                net = OofCnnQC() if cnn_oof else CnnQC()
+            except Exception as e:      # noqa: BLE001 — нет onnxruntime или каталога
+                net = _Unavailable(f'{type(e).__name__}: {e}')
         kp = None
         if keypoints:
             try:
@@ -102,7 +111,8 @@ class Analyzer:
             except Exception as e:      # noqa: BLE001 — нет torch, нет src/dxa_qc
                 kp = _Unavailable(f'{type(e).__name__}: {e}')
         return cls(region=RegionClassifier(), spine=SpineQC(),
-                   hip_method=hip_method, strict_region=strict_region, keypoints=kp)
+                   hip_method=hip_method, strict_region=strict_region, keypoints=kp,
+                   cnn=net)
 
     # ------------------------------------------------------------------ #
     def _keypoints(self, px: np.ndarray, region: str, out: dict) -> dict | None:
@@ -127,6 +137,42 @@ class Analyzer:
                                        'points': kp['points'],
                                        'iliac_visible': kp['iliac']}
         return kp
+
+    def _cnn(self, crit: str, px: np.ndarray, region: str, geometry, out: dict) -> dict | None:
+        """Свод сети с геометрией по критерию или None, если сеть недоступна.
+
+        Недоступная сеть не роняет кадр и не подменяет метод молча: вердикт
+        остаётся за геометрией, причина уходит во флаг.
+        """
+        if self.cnn is None:
+            return None
+        check = getattr(self.cnn, 'available', False)
+        if not (check(crit) if callable(check) else check):
+            err = getattr(self.cnn, 'errors', {}).get(crit) or getattr(self.cnn, 'error', '')
+            out['flags'].append(f'cnn:unavailable({crit}: {err})')
+            return None
+        try:
+            return self.cnn.assess(crit, px, region, geometry)
+        except Exception as e:                       # noqa: BLE001 — причина во флаг
+            out['flags'].append(f'cnn:failed({crit}: {type(e).__name__}: {e})')
+            return None
+
+    @staticmethod
+    def _merge_cnn(c: dict, a: dict, name: str, out: dict) -> None:
+        """Вердикт критерия -> свод сети и геометрии; геометрия остаётся в деталях."""
+        geo = c.get('violated')
+        c['geometry_violated'] = geo
+        c['p_cnn'] = a['p_cnn']
+        c['probability'] = a['probability']
+        c['probability_threshold'] = a['threshold']
+        c['violated'] = a['violated']
+        c['method'] = 'свод: геометрия + нейросеть (cnn_qc)'
+        if geo is not None and bool(geo) != a['violated']:
+            out['flags'].append(f'{name}:cnn_vs_geometry_disagree')
+            c['confidence'] = 'low'
+        elif geo is not None:
+            c['confidence'] = 'high'
+        out.setdefault('heatmaps', {})[name] = a['heatmap']
 
     def _spine_probabilities(self, criteria: dict, out: dict) -> None:
         """Калиброванная вероятность нарушения по каждому критерию позвоночника.
@@ -184,12 +230,23 @@ class Analyzer:
                     out['flags'].append('axis:keypoints_vs_contour_disagree')
                 out['details']['spine']['axis'] = kp['axis']
                 res['criteria']['axis'] = kp['axis']
+            art = res['criteria']['artifacts']
+            a = self._cnn('artifacts', px, 'spine', art.get('score'), out)
+            if a is not None:
+                self._merge_cnn(art, a, 'artifacts', out)
+                if art['violated'] and not art['geometry_violated']:
+                    art['text'] = (f"посторонний предмет или наложение: по виду кадра "
+                                   f"(нейросеть {a['p_cnn']:.2f}, вероятность нарушения "
+                                   f"{a['probability']:.2f})")
+                elif not art['violated']:
+                    art['text'] = ''
             self._spine_probabilities(res['criteria'], out)
             for crit, key in (('position', 'spine_position'), ('axis', 'spine_axis'),
                               ('artifacts', 'spine_artifacts')):
                 if res['criteria'][crit]['violated']:
                     out['violations'].append(key)
         else:
+            from hip_roi import probability as roi_probability
             from hip_roi.kits import measure_roi_margins
             from hip_rotation import THRESHOLDS as ROT_THR
             from hip_rotation import detect as detect_rotation
@@ -212,6 +269,10 @@ class Analyzer:
             out['flags'] += list(roi.get('flags', []))
             if roi.get('roi_ok') is False:
                 out['violations'].append('hip_roi')
+            # Вероятность — от того же измерения, что и вердикт (контур или точки).
+            p_roi = roi_probability.apply(roi)
+            out['details']['hip_roi']['probability'] = p_roi
+            out['probabilities']['hip_roi'] = p_roi
 
             # Ротация берёт ту же верхушку большого вертела, что и отступы ROI:
             # один ориентир на оба критерия бедра, а не два независимых.
@@ -223,12 +284,26 @@ class Analyzer:
             rot = detect_rotation(px, region, thr=ROT_THR, T=contour.get('T_px'))
             if kp and kp['rotation'] is not None:
                 rot = {**rot, 'keypoints_bulge_mm': kp['rotation']['bulge_mm']}
+            rot['probability'] = probability.apply(ROT_THR.get('probability'),
+                                                   rot.get('corridor_distance'))
+            a = self._cnn('rotation', px, region, rot.get('corridor_distance'), out)
+            if a is not None:
+                self._merge_cnn(rot, a, 'rotation', out)
+                if rot['violated'] and not rot['geometry_violated']:
+                    area = rot.get('area_mm2')
+                    rot['text'] = ('ротация: вид малого вертела нетипичен для корректной '
+                                   f"укладки (нейросеть {a['p_cnn']:.2f}"
+                                   + (f', выступ {area:.0f} мм² в пределах коридора'
+                                      if area is not None else '') + ')')
+                elif not rot['violated']:
+                    rot['text'] = ''
+            out['probabilities']['hip_rotation'] = rot['probability']
             out['details']['hip_rotation'] = rot
             out['flags'] += list(rot.get('flags', []))
             if rot.get('violated'):
                 out['violations'].append('hip_rotation')
-        # Критерии бедра пока без калибровки: свод считается по тем, у кого
-        # вероятность есть, при их отсутствии остаётся None.
+        # Свод по области: 1 - П(1 - p) по критериям, у которых есть измерение.
+        # Кадр, где ни один критерий не измерился, остаётся с None.
         out['quality_probability'] = probability.combine(out['probabilities'].values())
         return out
 
@@ -249,6 +324,14 @@ class Analyzer:
         try:
             res = self.analyze_pixels(frame.pixels)
             row['anatomical_region'] = res['anatomical_region']
+            # DXA позвоночника и бедра по протоколу — передне-задняя проекция;
+            # кадр приведён к ней по PatientOrientation при чтении (dicom_io).
+            row['projection'] = 'AP' if res['anatomical_region'] in ('spine', 'lh', 'rh') else 'unknown'
+            orient = (frame.meta or {}).get('orientation', '')
+            if orient in ('mirrored_lr', 'mirrored_hf', 'rotated_180'):
+                res['flags'].append(f'orientation:{orient}')
+            elif orient and orient != 'L\\F':
+                res['flags'].append(f'orientation:nonstandard({orient})')
             row['quality_class'] = int(bool(res['violations']))
             row['quality_probability'] = res.get('quality_probability')
             for key, pv in res.get('probabilities', {}).items():

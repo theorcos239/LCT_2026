@@ -273,6 +273,83 @@ def test_keypoints() -> None:
           [{k: r[k] for k in keys} for r in rows] == [{k: r[k] for k in keys} for r in r2])
 
 
+def test_cnn() -> None:
+    """Нейросетевое второе мнение (cnn_qc): подключено по умолчанию и не роняет сервис.
+
+    Как и с моделью точек, главное — поведение без неё: нет onnxruntime или
+    весов — кадр считается геометрией, причина уходит во флаг.
+    """
+    from cnn_qc import CnnQC
+
+    from .dicom_io import unique_frames
+    from .overlay import render
+    from .pipeline import Analyzer, process_study
+    study = sorted(DATA.iterdir())[0]
+
+    a = Analyzer.load()
+    ok = callable(getattr(a.cnn, 'available', None)) and all(
+        a.cnn.available(c) for c in ('rotation', 'artifacts'))
+    check('сеть cnn_qc подключена по умолчанию', ok, str(getattr(a.cnn, 'errors', '')))
+
+    missing = Analyzer.load()
+    missing.cnn = CnnQC(root=Path(tempfile.gettempdir()) / 'нет_сети')
+    rows = process_study(study, missing, 's')
+    check('без весов сети кадры считаются геометрией и помечаются флагом',
+          all(r['processing_status'] == 'Success' for r in rows)
+          and any('cnn:unavailable' in r['flags'] for r in rows))
+    if not ok:
+        return
+
+    rows = process_study(study, a, 's')
+    spine = [r for r in rows if r['anatomical_region'] == 'spine']
+    hip = [r for r in rows if r['anatomical_region'] in ('lh', 'rh')]
+    check('артефакты позвоночника — свод геометрии и сети',
+          all(r['details']['spine']['artifacts'].get('p_cnn') is not None for r in spine),
+          f'кадров {len(spine)}')
+    check('ротация бедра — свод геометрии и сети',
+          all(r['details']['hip_rotation'].get('p_cnn') is not None for r in hip),
+          f'кадров {len(hip)}')
+    check('вероятность нарушения есть у каждого кадра',
+          all(r.get('quality_probability') is not None for r in rows))
+    r2 = process_study(study, a, 's')
+    keys = ('quality_class', 'violation_type', 'quality_probability')
+    check('повторный прогон с сетью даёт то же самое',
+          [{k: r[k] for k in keys} for r in rows] == [{k: r[k] for k in keys} for r in r2])
+
+    frames, _ = unique_frames(study)
+    by_uid = {f.image_uid: f for f in frames}
+    imgs = [render(by_uid[r['image_uid']].pixels, r) for r in rows if r['image_uid'] in by_uid]
+    check('визуализация строится по деталям вердикта', len(imgs) == len(rows)
+          and all(i.size[0] > 0 for i in imgs))
+
+
+def test_orientation() -> None:
+    """Зеркальная выгрузка (PatientOrientation = R, F) даёт тот же вердикт и ту же сторону."""
+    import pydicom
+
+    from .dicom_io import read_frame
+    from .pipeline import Analyzer
+    a = Analyzer.load(cnn=False)
+    hip = next(p for p in sorted(DATA.rglob('*.dcm'))
+               if a.analyze_pixels(read_frame(p).pixels)['anatomical_region'] == 'lh')
+    base = a.analyze_frame(read_frame(hip))
+    ds = pydicom.dcmread(str(hip))
+    ds.PixelData = np.ascontiguousarray(ds.pixel_array[:, ::-1]).tobytes()
+    ds.PatientOrientation = ['R', 'F']
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / 'mirrored.dcm'
+        ds.save_as(str(p))
+        fr = read_frame(p)
+        mir = a.analyze_frame(fr)
+    check('зеркальный кадр (R, F) приводится к стандартному виду',
+          fr.meta.get('orientation') == 'mirrored_lr' and np.array_equal(fr.pixels, read_frame(hip).pixels))
+    check('сторона бедра и вердикт не зависят от зеркальной выгрузки',
+          (mir['anatomical_region'], mir['violation_type']) == (base['anatomical_region'], base['violation_type'])
+          and 'orientation:mirrored_lr' in mir['flags'],
+          f"{base['anatomical_region']} -> {mir['anatomical_region']}")
+    check('проекция в отчёте', base.get('projection') == 'AP')
+
+
 def test_dicom_sr() -> None:
     """DICOM SR (ТЗ 2.6): валидный Basic Text SR, связан со снимком, читается обратно.
 
@@ -542,6 +619,10 @@ def main() -> int:
             test_timing()
             print('модель ключевых точек')
             test_keypoints()
+            print('нейросетевое второе мнение')
+            test_cnn()
+            print('ориентация и проекция')
+            test_orientation()
             print('DICOM SR')
             test_dicom_sr()
 

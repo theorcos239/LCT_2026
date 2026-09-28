@@ -1,0 +1,12 @@
+{
+  "params": {
+    "w": 0.181035,
+    "b": -2.258639
+  },
+  "score": "max(30 - m_top_mm, 30 - m_bottom_mm, 20 - m_lat_mm), мм",
+  "n": 150,
+  "positives": 7,
+  "roc_auc": 0.8916,
+  "brier_oof": 0.0336,
+  "base_rate": 0.0467
+}

@@ -186,6 +186,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description='Калибровка критериев позвоночника')
     ap.add_argument('--no-save', action='store_true', help='не писать модель и пороги')
     ap.add_argument('--sweep', action='store_true', help='таблица всех правил свёртки')
+    ap.add_argument('--probability-only', action='store_true',
+                    help='перекалибровать только вероятности; пороги и модель вида не трогать')
     args = ap.parse_args()
 
     df = trainset.frames('spine')
@@ -194,6 +196,8 @@ def main() -> int:
 
     oof_pred, oof_app, per_rule, oof_prob = out_of_fold(d, X)
     metrics = report(d, oof_pred, oof_app, oof_prob)
+    if args.probability_only:
+        return _save_probability(d, metrics, dry=args.no_save)
 
     print('\nOOF (порог и модель вида учились только на обучающих фолдах):')
     for name, m in metrics.items():
@@ -256,6 +260,34 @@ def main() -> int:
                            encoding='utf-8')
         d.to_csv(HERE / 'measurements.csv', index=False, encoding='utf-8')
         print(f'сохранено: {app.MODEL_PATH.name}, {THRESHOLDS.name}, {METRICS.name}, measurements.csv')
+    return 0
+
+
+def _save_probability(d: pd.DataFrame, metrics: dict, dry: bool = False) -> int:
+    """Только калибровка Платта: вероятности в thresholds.json, Brier в metrics.json.
+
+    Пороги вердикта и модель вида кадра остаются как были: их пересчёт в
+    другом окружении (версия scikit-learn) дал бы другой model.joblib, а
+    вероятность от них не зависит.
+    """
+    thr = json.loads(THRESHOLDS.read_text(encoding='utf-8'))
+    saved = json.loads(METRICS.read_text(encoding='utf-8'))
+    thr['probability'] = {}
+    for name in RULES:
+        y = d[f'y_{name}'].values.astype(float)
+        pl = prob.fit(y, geometry_score(name, d))
+        if pl is not None:
+            thr['probability'][name] = pl
+        for k in ('brier', 'prob_mean', 'base_rate'):
+            if k in metrics[name]:
+                saved[name][k] = metrics[name][k]
+        print(f"  {name:10} Платт {pl}, OOF Brier {metrics[name].get('brier')} "
+              f"(доля нарушений {metrics[name].get('base_rate')})")
+    if not dry:
+        THRESHOLDS.write_text(json.dumps(thr, ensure_ascii=False, indent=2), encoding='utf-8')
+        METRICS.write_text(json.dumps(saved, ensure_ascii=False, indent=2, default=float),
+                           encoding='utf-8')
+        print(f'сохранено: {THRESHOLDS.name} (probability), {METRICS.name} (brier)')
     return 0
 
 

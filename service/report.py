@@ -17,9 +17,9 @@ import pandas as pd
 
 from .pipeline import COLUMNS
 
-EXTRA = ['violation_description', 'quality_probability', 'p_spine_position',
-         'p_spine_axis', 'p_spine_artifacts', 'region_confidence', 'region_accepted',
-         'file_name', 'duplicates', 'flags', 'error']
+EXTRA = ['projection', 'violation_description', 'quality_probability', 'p_spine_position',
+         'p_spine_axis', 'p_spine_artifacts', 'p_hip_rotation', 'p_hip_roi',
+         'region_confidence', 'region_accepted', 'file_name', 'duplicates', 'flags', 'error']
 
 
 def to_frame(rows: list[dict]) -> pd.DataFrame:

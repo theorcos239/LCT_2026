@@ -74,6 +74,35 @@ class Frame:
     meta: dict = field(default_factory=dict)
 
 
+def normalize_orientation(px: np.ndarray, tag) -> tuple[np.ndarray, str]:
+    """Кадр -> стандартный AP-вид (PatientOrientation = L, F).
+
+    Все модели учились на выгрузке Lunar, где вправо по снимку — к левому боку
+    пациента, вниз — к ногам (а у четверти кадров тег пуст). Зеркальная
+    выгрузка другого аппарата (R, F) без нормализации поменяла бы местами
+    левое и правое бедро. Пустой или нечитаемый тег кадр не меняет.
+
+    Возвращает пиксели и то, что сделано: 'L\\F' (как есть), 'mirrored_lr',
+    'mirrored_hf', 'rotated_180' или '' (тега нет).
+    """
+    try:
+        row, col = (str(v).upper()[:1] for v in list(tag)[:2]) if tag else ('', '')
+    except Exception:
+        row, col = '', ''
+    if not row or not col:
+        return px, ''
+    flip_lr, flip_ud = row == 'R', col == 'H'
+    if row not in ('L', 'R') or col not in ('F', 'H'):
+        return px, f'{row}\\{col}'            # поперечная ориентация: не трогаем, флаг в отчёте
+    if flip_lr:
+        px = px[:, ::-1]
+    if flip_ud:
+        px = px[::-1, :]
+    done = {(False, False): 'L\\F', (True, False): 'mirrored_lr',
+            (False, True): 'mirrored_hf', (True, True): 'rotated_180'}[(flip_lr, flip_ud)]
+    return np.ascontiguousarray(px), done
+
+
 def read_frame(path: str | Path, study_key: str | None = None) -> Frame:
     """DICOM -> Frame. Яркость приведена к «кость светлая»."""
     import pydicom
@@ -95,6 +124,7 @@ def read_frame(path: str | Path, study_key: str | None = None) -> Frame:
         px = px.max() - px
     if px.ndim != 2:
         raise ValueError(f'ожидался одноканальный кадр, получено {px.shape}')
+    px, orientation = normalize_orientation(px, ds.get('PatientOrientation'))
 
     return Frame(
         path=p,
@@ -104,6 +134,7 @@ def read_frame(path: str | Path, study_key: str | None = None) -> Frame:
         pixels=px,
         px_hash=hashlib.md5(np.ascontiguousarray(px).tobytes()).hexdigest(),
         meta={'rows': int(px.shape[0]), 'cols': int(px.shape[1]),
+              'orientation': orientation,
               'instance': ds.get('InstanceNumber', None),
               'manufacturer': str(ds.get('Manufacturer', '') or ''),
               'modality': str(ds.get('Modality', '') or '')},

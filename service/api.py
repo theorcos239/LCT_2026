@@ -70,15 +70,17 @@ def analyzer() -> Analyzer:
     """Модели грузятся один раз на процесс: чтение весов дороже самого анализа.
 
     DXA_QC_KEYPOINTS=1 подключает модель ключевых точек (нужен torch и веса в
-    runs/keypoints). Переменной окружения, а не параметра запроса: веса читаются
-    при старте процесса, переключать измеритель между запросами нечестно —
-    отчёты станут несравнимы между собой.
+    runs/keypoints). DXA_QC_CNN=0 выключает нейросетевое второе мнение
+    (cnn_qc) — вердикт тогда выносит одна геометрия. Переменной окружения, а
+    не параметра запроса: веса читаются при старте процесса, переключать
+    измеритель между запросами нечестно — отчёты станут несравнимы между собой.
     """
     global _analyzer
     with _lock:
         if _analyzer is None:
             _analyzer = Analyzer.load(
-                keypoints=os.environ.get('DXA_QC_KEYPOINTS', '') not in ('', '0', 'false'))
+                keypoints=os.environ.get('DXA_QC_KEYPOINTS', '') not in ('', '0', 'false'),
+                cnn=os.environ.get('DXA_QC_CNN', '1') not in ('0', 'false'))
     return _analyzer
 
 
@@ -160,8 +162,12 @@ def _run_job(job: Job, data_dir: Path, fmt: str, overlays: bool, sr: bool = Fals
 def health() -> dict:
     try:
         a = analyzer()
+        cnn = a.cnn
+        nets = {f'cnn_{c}': bool(callable(getattr(cnn, 'available', None)) and cnn.available(c))
+                for c in ('rotation', 'artifacts')}
         return {'status': 'ok', 'models': {'region_clf': True,
-                                           'spine_appearance': a.spine.appearance.available}}
+                                           'spine_appearance': a.spine.appearance.available,
+                                           **nets}}
     except Exception as e:
         raise HTTPException(503, f'модели не загружены: {e}')
 
@@ -181,6 +187,8 @@ def version() -> dict:
             'roi_margins_mm': {'top': TOP_MM, 'bottom': BOTTOM_MM, 'lat': LAT_MM},
             'axis_limit_deg_tz': AXIS_LIMIT_DEG,
             'keypoints': a.keypoints is not None and bool(getattr(a.keypoints, 'available', False)),
+            'cnn': {c: {'threshold': m.get('threshold'), 'stack': m.get('stack')}
+                    for c, m in getattr(a.cnn, 'meta', {}).items()},
             'region_classes': list(REGION_RU)}
 
 
@@ -221,6 +229,7 @@ async def analyze(file: UploadFile = File(...)) -> JSONResponse:
         'file_name': file.filename,
         'anatomical_region': res['anatomical_region'],
         'anatomical_region_ru': REGION_RU.get(res['anatomical_region'], ''),
+        'projection': 'AP' if res['anatomical_region'] in ('spine', 'lh', 'rh') else 'unknown',
         'quality_class': int(bool(res['violations'])),
         'violation_type': ';'.join(res['violations']),
         'violation_description': [VIOLATIONS[v] for v in res['violations']],
@@ -241,7 +250,8 @@ async def analyze_overlay(file: UploadFile = File(...)) -> StreamingResponse:
     try:
         px = _read_upload(await file.read())
         res = analyzer().analyze_pixels(px)
-        img = render(px, {'anatomical_region': res['anatomical_region']})
+        img = render(px, {'anatomical_region': res['anatomical_region'],
+                          'details': res.get('details', {})})
     except Exception as e:
         raise HTTPException(400, f'не удалось построить визуализацию: {e}')
     buf = io.BytesIO()

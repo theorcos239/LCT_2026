@@ -20,10 +20,13 @@ fi
 # Веса обязаны лежать в репозитории: без них сервис поднимется, но будет
 # работать на одной геометрии и молча потеряет часть критериев.
 for f in region_clf/model.joblib spine_qc/model.joblib spine_qc/thresholds.json \
-         hip_rotation/thresholds.json; do
+         hip_rotation/thresholds.json hip_roi/probability.json \
+         cnn_qc/rotation/model.onnx cnn_qc/rotation/meta.json \
+         cnn_qc/artifacts/model.onnx cnn_qc/artifacts/meta.json; do
     if [ ! -f "$HERE/$f" ]; then
         echo "не найден файл модели: $f" >&2
-        echo "обучите заново:  python -m region_clf.train && python -m spine_qc.calibrate && python -m hip_rotation.calibrate" >&2
+        echo "обучите заново, см. docs/TRAINING.md (region_clf.train, spine_qc.calibrate," >&2
+        echo "hip_rotation.calibrate, hip_roi.probability, cnn_qc.train)" >&2
         exit 1
     fi
 done

@@ -35,25 +35,32 @@ WORKDIR /app
 COPY requirements.txt requirements.lock ./
 RUN pip install --no-cache-dir -r requirements.lock && pip check
 
+# Непривилегированный пользователь: сервис читает медицинские изображения,
+# root внутри контейнера ему не нужен. Создаётся до копирования кода, а права
+# выдаются через COPY --chown: `chown -R` отдельным слоем продублировал бы в
+# образе все файлы, включая 255 МБ весов сети.
+RUN useradd --create-home --uid 10001 dxa && \
+    mkdir -p /data /out && chown dxa:dxa /app /data /out
+
 # Код и веса. Обучающий набор в образ не кладётся: данные монтируются снаружи.
-COPY region_clf/ region_clf/
-COPY hip_roi/ hip_roi/
-COPY hip_rotation/ hip_rotation/
-COPY spine_qc/ spine_qc/
-COPY service/ service/
-COPY stats.py trainset.py folds.csv ./
+COPY --chown=dxa:dxa region_clf/ region_clf/
+COPY --chown=dxa:dxa hip_roi/ hip_roi/
+COPY --chown=dxa:dxa hip_rotation/ hip_rotation/
+COPY --chown=dxa:dxa spine_qc/ spine_qc/
+# Нейросетевое второе мнение (ротация, посторонние предметы): код, ONNX-веса
+# (ансамбль 3 x 42.6 МБ на критерий, fp16) и калибровка свода. Обучающий
+# скрипт в образе не исполняется (он требует torch), но весит килобайты.
+COPY --chown=dxa:dxa cnn_qc/ cnn_qc/
+COPY --chown=dxa:dxa service/ service/
+COPY --chown=dxa:dxa stats.py trainset.py folds.csv ./
 
 # Код модели ключевых точек (десятки КБ) — без него флаг --keypoints не
 # заработал бы даже при смонтированных весах и torch. torch и веса
 # (runs/keypoints, requirements-train.txt) в образ сознательно не входят:
-# базовый образ остаётся 175 МБ, флаг по умолчанию выключен и без них просто
+# образ не растёт на 2 ГБ, флаг по умолчанию выключен и без них просто
 # недоступен (см. README, «Модель ключевых точек»).
-COPY src/ src/
+COPY --chown=dxa:dxa src/ src/
 
-# Непривилегированный пользователь: сервис читает медицинские изображения,
-# root внутри контейнера ему не нужен.
-RUN useradd --create-home --uid 10001 dxa && \
-    mkdir -p /data /out && chown -R dxa:dxa /app /data /out
 USER dxa
 
 EXPOSE 8000

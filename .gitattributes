@@ -2,3 +2,6 @@
 # /bin/sh («$'\r': command not found»). Храним и выдаём их только с LF.
 *.sh         text eol=lf
 Dockerfile*  text eol=lf
+
+# Веса сети cnn_qc: только двоичные, без преобразования концов строк
+*.onnx       binary

@@ -321,11 +321,18 @@ const FLAGS = {
   'T:fallback_T2': 'Верхушка вертела найдена запасным способом (контур без седловины).',
   'L:no_bulge_fallback_L2': 'Выпуклость вертела не выражена — латеральный край взят по профилю бедра.',
   'roi:keypoints_vs_contour_disagree': 'Отступы по модели точек и по контуру расходятся больше чем на 5 мм.',
+  'rotation:cnn_vs_geometry_disagree': 'Нейросеть и выступ малого вертела расходятся: вердикт вынесен по своду, проверьте ротацию по снимку.',
+  'artifacts:cnn_vs_geometry_disagree': 'Нейросеть и морфология расходятся в оценке посторонних предметов: вердикт по своду, проверьте снимок.',
+  'orientation:mirrored_lr': 'Снимок выгружен зеркально (PatientOrientation R\\F) и приведён к стандартному виду.',
+  'orientation:mirrored_hf': 'Снимок выгружен перевёрнутым по вертикали (PatientOrientation L\\H) и приведён к стандартному виду.',
+  'orientation:rotated_180': 'Снимок выгружен повёрнутым на 180° (PatientOrientation R\\H) и приведён к стандартному виду.',
 };
 const flagText = f => {
   if (FLAGS[f]) return FLAGS[f];
   if (f.startsWith('region:')) return `Кадр не принят фильтром области: ${f.slice(7)}. Нужен ручной разбор.`;
   if (f.startsWith('keypoints:unavailable')) return 'Модель ключевых точек недоступна — кадр посчитан контурной геометрией.';
+  if (f.startsWith('cnn:unavailable') || f.startsWith('cnn:failed'))
+    return 'Нейросеть недоступна — ротация и посторонние предметы оценены только геометрией.';
   return null;
 };
 
@@ -722,8 +729,8 @@ function renderCard(r) {
 }
 
 function legend(region) {
-  if (region === 'spine') return '<i style="background:#50d278"></i>ось (норма) <i style="background:#f05a5a"></i>ось с нарушением, посторонние структуры <i style="background:#5aaaff"></i>вспомогательные построения';
-  if (region === 'lh' || region === 'rh') return '<i style="background:#00dcff"></i>найденные границы: верхушка вертела, седалищная кость, наружный контур бедра <i style="background:#3cdc3c"></i>порог выдержан <i style="background:#ff3c3c"></i>не выдержан';
+  if (region === 'spine') return '<i style="background:#50d278"></i>ось (норма) <i style="background:#f05a5a"></i>ось с нарушением, посторонние структуры <i style="background:#5aaaff"></i>вспомогательные построения <i style="background:#ff6000"></i>тепловая карта нейросети';
+  if (region === 'lh' || region === 'rh') return '<i style="background:#00dcff"></i>найденные границы: верхушка вертела, седалищная кость, наружный контур бедра <i style="background:#3cdc3c"></i>порог выдержан <i style="background:#ff3c3c"></i>не выдержан <i style="background:#ff6000"></i>тепловая карта нейросети';
   return '';
 }
 
@@ -747,9 +754,17 @@ function criteria(r) {
       note: pos.iliac_area == null ? '' : `доля кости в зонах гребней ${fmt(pos.iliac_area, 3)} (порог ${fmt(thr.iliac_area ?? 0.001, 3)})`
         + (pos.iliac_left_area != null ? `, слева ${fmt(pos.iliac_left_area, 3)}, справа ${fmt(pos.iliac_right_area, 3)}` : '') });
     const found = art.score > 0;
-    out.push({ name: 'Посторонние предметы', ok: art.violated == null ? null : !art.violated,
-      val: art.violated ? `найдены` : 'не найдены', norm: 'нет',
-      note: found ? `самая заметная тонкая яркая структура: длина ${fmt(art.length_mm, 0)} мм, счёт ${fmt(art.score, 1)} при пороге ${fmt(thr.artifact_score ?? 24, 1)}` : '' });
+    const morph = found ? `самая заметная тонкая яркая структура: длина ${fmt(art.length_mm, 0)} мм, счёт ${fmt(art.score, 1)} при пороге ${fmt(thr.artifact_score ?? 24, 1)}` : 'тонких ярких структур вне позвоночника нет';
+    if (art.p_cnn != null) {
+      const t = art.probability_threshold;
+      out.push({ name: 'Посторонние предметы', ok: art.violated == null ? null : !art.violated,
+        val: `${art.violated ? 'найдены' : 'не найдены'} · p ${fmt(art.probability, 2)}`, norm: `p < ${fmt(t, 2)}`,
+        note: `свод морфологии и нейросети (сеть ${fmt(art.p_cnn, 2)}); морфология: ${morph}`
+          + (art.violated ? ' · оранжевым на снимке — где сеть видит предмет' : ''),
+        bar: { v: art.probability, lo: 0, hi: t, max: 1 } });
+    } else
+      out.push({ name: 'Посторонние предметы', ok: art.violated == null ? null : !art.violated,
+        val: art.violated ? `найдены` : 'не найдены', norm: 'нет', note: found ? morph : '' });
   }
   if (d.hip_roi) {
     const roi = d.hip_roi, m = S.cfg.roi_margins_mm || { top: 30, bottom: 30, lat: 20 };
@@ -764,9 +779,19 @@ function criteria(r) {
   if (d.hip_rotation) {
     const rot = d.hip_rotation, cor = S.cfg.rotation_corridor_mm2 || [96, 272];
     const kind = rot.area_mm2 == null ? '' : rot.area_mm2 < cor[0] ? ' — переротация: малый вертел почти не выступает' : rot.area_mm2 > cor[1] ? ' — недоротация: выступ слишком большой' : '';
-    out.push({ name: 'Ротация: выступ малого вертела', ok: rot.violated == null ? null : !rot.violated,
+    const byNet = rot.p_cnn != null, geoOk = byNet ? rot.geometry_violated : rot.violated;
+    if (byNet) {
+      const t = rot.probability_threshold;
+      out.push({ name: 'Ротация бедра', ok: rot.violated == null ? null : !rot.violated,
+        val: `${rot.violated ? 'есть' : 'нет'} · p ${fmt(rot.probability, 2)}`, norm: `p < ${fmt(t, 2)}`,
+        note: `свод выступа малого вертела и нейросети (сеть ${fmt(rot.p_cnn, 2)})`
+          + (rot.violated ? ' · оранжевым на снимке — где сеть видит признак ротации' : ''),
+        bar: { v: rot.probability, lo: 0, hi: t, max: 1 } });
+    }
+    out.push({ name: byNet ? 'Выступ малого вертела (измерение)' : 'Ротация: выступ малого вертела',
+      ok: geoOk == null ? null : !geoOk,
       val: rot.area_mm2 == null ? 'не измерен' : `${fmt(rot.area_mm2, 0)} мм²`, norm: `${fmt(cor[0], 0)}–${fmt(cor[1], 0)} мм²`,
-      note: 'наименее надёжный критерий: проверьте по снимку' + kind,
+      note: (byNet ? 'коридор нормы по корректным снимкам' : 'наименее надёжный критерий: проверьте по снимку') + kind,
       bar: rot.area_mm2 == null ? null : { v: rot.area_mm2, lo: cor[0], hi: cor[1], max: Math.max(cor[1] * 1.5, rot.area_mm2 * 1.1) } });
   }
   if (!d.spine && !d.hip_roi && r.anatomical_region === 'unknown')

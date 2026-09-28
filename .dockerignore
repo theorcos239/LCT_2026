@@ -21,6 +21,9 @@ hip_rotation/measurements.csv
 hip_roi/eval/
 hip_roi/contradictions/
 
+# документация и презентация в образ не нужны
+docs/
+
 .git/
 .gitignore
 __pycache__/
