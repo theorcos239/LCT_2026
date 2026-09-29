@@ -33,8 +33,8 @@ FMT=csv ./run.sh batch /путь/к/закрытому_набору  # то же
 лимите ТЗ в 3 минуты), 100 исследований — около 2.5 минут. GPU не нужен.
 Папка с данными монтируется только на чтение.
 
-**Без Docker.** Windows — установщик настольного приложения
-([DESKTOP.md](DESKTOP.md)), затем `dxa-qc-cli batch папка --out report.xlsx`.
+**Без Docker.** Windows — [установщик настольного приложения](https://github.com/theorcos239/LCT_2026/raw/master/release/DXA-QC-Setup-1.0.0.exe)
+(288 МБ, [DESKTOP.md](DESKTOP.md)), затем `dxa-qc-cli batch папка --out report.xlsx`.
 Любая ОС с Python 3.11 — `pip install -r requirements.lock` и
 `python -m service.cli папка --out report.xlsx`. Все три пути дают один и тот
 же отчёт: контейнер, установленное приложение и локальный Python сверены на
@@ -55,7 +55,7 @@ FMT=csv ./run.sh batch /путь/к/закрытому_набору  # то же
 |---|---|
 | веб-интерфейс | `./run.sh` → http://localhost:8000 — загрузка папки или zip, снимки с разметкой, отметки специалиста, выгрузки. Устанавливается как приложение («Установить» в адресной строке Chrome или Edge) |
 | API | http://localhost:8000/docs — пакетная обработка `POST /batch`, один снимок `POST /analyze` |
-| настольное приложение | установщик `DXA-QC-Setup-1.0.0.exe` — [DESKTOP.md](DESKTOP.md) |
+| настольное приложение | установщик [DXA-QC-Setup-1.0.0.exe](https://github.com/theorcos239/LCT_2026/raw/master/release/DXA-QC-Setup-1.0.0.exe) — [DESKTOP.md](DESKTOP.md) |
 | Telegram-бот | [@LCT_bone_density_research_bot](https://t.me/LCT_bone_density_research_bot) — отвечает, пока запущен у команды; только обезличенные данные — [TELEGRAM_BOT.md](TELEGRAM_BOT.md) |
 | презентация | [presentation/DXA_QC_pitch.pptx](presentation/DXA_QC_pitch.pptx), [PDF](presentation/DXA_QC_pitch.pdf), доклад [DXA_QC_speech.docx](presentation/DXA_QC_speech.docx), сценарий демонстрации [DEMO.md](DEMO.md) |
 

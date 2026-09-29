@@ -5,3 +5,7 @@ Dockerfile*  text eol=lf
 
 # Веса сети cnn_qc: только двоичные, без преобразования концов строк
 *.onnx       binary
+
+# Установщик настольного приложения (288 МБ, больше лимита GitHub в 100 МБ) —
+# через Git LFS. Обычный git clone его не скачивает (см. .lfsconfig).
+release/*.exe filter=lfs diff=lfs merge=lfs -text
