@@ -1,5 +1,0 @@
-# Установщик из release/ не скачивается при git clone и git pull: проверяющим,
-# которые собирают контейнер, он не нужен. Скачать — кнопкой Download на
-# GitHub или командой: git lfs pull --include="release/*"
-[lfs]
-	fetchexclude = release/*

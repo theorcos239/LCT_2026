@@ -29,11 +29,6 @@ runs/**
 !runs/eval_baseline/
 !runs/eval_baseline/metrics.json
 
-# Презентация: PNG слайдов — экспорт PowerPoint для миниатюр в докладе .docx
-docs/presentation/assets/pptx_png/
-# Полный шаблон организаторов (34 МБ) — в репозитории его облегчённая копия
-# docs/presentation/template/LCT2026_template.pptx
-/ЛЦТ2026 Шаблон презентации.pptx
 
 # Демо-архив (python docs/presentation/make_demo_zip.py)
 /demo.zip
@@ -49,3 +44,22 @@ docs/presentation/assets/pptx_png/
 # Файлы блокировки LibreOffice/Office
 .~lock.*#
 ~$*
+
+# Медицинские изображения не публикуются (ТЗ 3.2): обучающий набор и всё, в чём
+# есть снимки DXA, хранится только локально и передаётся организаторам отдельно.
+*.dcm
+/НД_для_обучения/
+/data/*.npz
+/Processing/
+/notebooks/
+/hip_roi/eval/*.png
+/hip_roi/contradictions/
+# Презентация, генераторы документов и снимки экрана — рабочие материалы команды.
+# В репозитории остаются только версии документации без рентгеновских снимков:
+# docs/Пояснительная_записка.pdf и docs/Инструкция_*.pdf.
+/docs/presentation/
+/docs/manuals/
+/ЛЦТ2026 Шаблон презентации.pptx
+/4. ДепЗдрав.pdf
+# Готовый установщик содержит инструкции и собирается desktop/build_windows.ps1
+/release/

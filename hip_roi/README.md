@@ -217,8 +217,9 @@ kit3: водораздел — собственная минимаксная з�
   вердикт по длине поля (`roi_rule = scan_length`), а отступы kit2 по
   рисунку 6 показывает рядом и использует в режиме `--roi-rule margins`.
 
-Контактные листы: `eval/expert_positive_<kit>.png` (все 7 помеченных),
-`eval/disagree_<kit>.png` (все расхождения), таблицы `eval/margins_<kit>.csv`.
+Таблицы — `eval/margins_<kit>.csv`. Контактные листы со снимками
+(`eval/expert_positive_<kit>.png`, `eval/disagree_<kit>.png`) пишутся при
+прогоне и в репозиторий не входят.
 
 **Что это значит.**
 
@@ -306,6 +307,4 @@ kit3: водораздел — собственная минимаксная з�
 | [measure.py](measure.py) | CLI |
 | [evaluate.py](evaluate.py) | сверка с эталоном xlsx, сверка седалищной кости с ручными точками, свип порогов, листы |
 | [test_hip_roi.py](test_hip_roi.py) | тесты |
-| [report_contradictions.py](report_contradictions.py) | архив «эксперт против ТЗ»: размеченные снимки + пояснение |
 | `eval/` | результаты последнего прогона |
-| `contradictions/` | [expert_vs_tz.zip](contradictions/expert_vs_tz.zip) и [ПОЯСНЕНИЕ.txt](contradictions/ПОЯСНЕНИЕ.txt) — 9 кадров, где эталонная разметка расходится с отступами по рисунку 6 ТЗ |

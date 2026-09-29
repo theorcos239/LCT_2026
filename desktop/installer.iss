@@ -70,8 +70,8 @@ Name: "addtopath"; Description: "{cm:AddToPath}"; GroupDescription: "{cm:Additio
 [Files]
 Source: "{#SrcDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "installer_info.txt"; DestDir: "{app}"; DestName: "ПРОЧТИТЕ.txt"; Flags: ignoreversion
-Source: "..\docs\manuals\Инструкция_приложение.pdf"; DestDir: "{app}"; DestName: "Инструкция — приложение.pdf"; Flags: ignoreversion
-Source: "..\docs\manuals\Инструкция_Telegram-бот.pdf"; DestDir: "{app}"; DestName: "Инструкция — Telegram-бот.pdf"; Flags: ignoreversion
+Source: "..\docs\Инструкция_приложение.pdf"; DestDir: "{app}"; DestName: "Инструкция — приложение.pdf"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "..\docs\Инструкция_Telegram-бот.pdf"; DestDir: "{app}"; DestName: "Инструкция — Telegram-бот.pdf"; Flags: ignoreversion skipifsourcedoesntexist
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"
@@ -79,8 +79,8 @@ Name: "{group}\{cm:BotShortcut}"; Filename: "{app}\{#CliExe}"; Parameters: "bot"
 Name: "{group}\{cm:ServeShortcut}"; Filename: "{app}\{#CliExe}"; Parameters: "serve"; WorkingDir: "{app}"; IconFilename: "{app}\{#AppExe}"
 Name: "{group}\{cm:CliShortcut}"; Filename: "{cmd}"; Parameters: "/k ""cd /d ""{app}"" && {#CliExe} --help"""; WorkingDir: "{app}"; IconFilename: "{app}\{#AppExe}"
 Name: "{group}\ПРОЧТИТЕ"; Filename: "{app}\ПРОЧТИТЕ.txt"
-Name: "{group}\Инструкция — приложение"; Filename: "{app}\Инструкция — приложение.pdf"
-Name: "{group}\Инструкция — Telegram-бот"; Filename: "{app}\Инструкция — Telegram-бот.pdf"
+Name: "{group}\Инструкция — приложение"; Filename: "{app}\Инструкция — приложение.pdf"; Check: ManualInstalled('Инструкция — приложение.pdf')
+Name: "{group}\Инструкция — Telegram-бот"; Filename: "{app}\Инструкция — Telegram-бот.pdf"; Check: ManualInstalled('Инструкция — Telegram-бот.pdf')
 Name: "{group}\{cm:UninstallProgram,{#AppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
 
@@ -96,6 +96,12 @@ Type: filesandordirs; Name: "{localappdata}\DXA-QC"
 Type: filesandordirs; Name: "{userappdata}\DXA-QC"
 
 [Code]
+{ Ярлык инструкции создаётся, только если её PDF попал в установщик }
+function ManualInstalled(Name: string): Boolean;
+begin
+  Result := FileExists(ExpandConstant('{app}\') + Name);
+end;
+
 function NeedsAddPath(Dir: string): Boolean;
 var
   Paths: string;

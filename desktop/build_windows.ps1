@@ -66,7 +66,7 @@ if (Test-Path "demo.zip") {
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path $out)) { throw "пакетная обработка demo.zip не прошла" }
     Write-Host "отчёт по demo.zip: $out"
 } else {
-    Write-Host "demo.zip нет — пакетная проверка пропущена (python docs\presentation\make_demo_zip.py)"
+    Write-Host "demo.zip нет — пакетная проверка пропущена"
 }
 
 if (-not $SkipPortable) {
