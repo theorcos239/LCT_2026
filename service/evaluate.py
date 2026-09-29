@@ -73,8 +73,8 @@ def _risk_score(vtype: str, details: dict) -> float:
             r = details['hip_rotation']
             return r['probability'] if r.get('p_cnn') is not None else r['corridor_distance']
         if vtype == 'hip_roi':
-            from hip_roi.probability import shortfall
-            v = shortfall(details['hip_roi'])
+            from hip_roi.probability import score
+            v = score(details['hip_roi'])
             return float('nan') if v is None else v
     except (KeyError, TypeError):
         pass
@@ -82,7 +82,8 @@ def _risk_score(vtype: str, details: dict) -> float:
 
 
 def run(hip_method: str = 'kit2', keypoints: bool = False,
-        keypoints_oof: bool = False, cnn: bool = True) -> pd.DataFrame:
+        keypoints_oof: bool = False, cnn: bool = True,
+        roi_rule: str = 'scan_length') -> pd.DataFrame:
     """Прогон конвейера по всем уникальным кадрам обучающего набора.
 
     keypoints=True считает ось позвоночника и отступы ROI моделью ключевых
@@ -104,7 +105,7 @@ def run(hip_method: str = 'kit2', keypoints: bool = False,
 
     df = trainset.frames()
     a = Analyzer.load(hip_method=hip_method, keypoints=keypoints or keypoints_oof,
-                      cnn=False, cnn_oof=cnn)
+                      cnn=False, cnn_oof=cnn, roi_rule=roi_rule)
     by_fold = {}
     if keypoints_oof:
         for k in sorted(df.fold.unique()):
@@ -265,8 +266,8 @@ def honest(d: pd.DataFrame, n_boot: int = 2000, cnn: bool = True) -> dict:
     from hip_roi import probability as roi_prob
     pred['hip_roi'] = {r.rel_path: int('hip_roi' in r.violations) for r in d.itertuples()}
     score['hip_roi'] = {r.rel_path: _risk_score('hip_roi', r.details) for r in d.itertuples()}
-    probs['hip_roi'] = {k: (prob.apply(roi_prob.PARAMS, v) if np.isfinite(v) else None)
-                        for k, v in score['hip_roi'].items()}
+    probs['hip_roi'] = {r.rel_path: (r.details.get('hip_roi') or {}).get('probability')
+                        for r in d.itertuples()}
 
     out: dict = {'per_violation': {}, 'per_region': {}, 'overall': {}}
     frame_pred = {r: 0 for r in d.rel_path}
@@ -314,7 +315,7 @@ def honest(d: pd.DataFrame, n_boot: int = 2000, cnn: bool = True) -> dict:
                             else 'порог по обучающим фолдам'),
         'hip_rotation': ('вложенный свод cnn_qc' if cnn and (root / 'cnn_qc' / 'rotation' / 'oof.csv').exists()
                          else 'коридор по обучающим фолдам'),
-        'hip_roi': 'пороги ТЗ, без подбора',
+        'hip_roi': 'длина поля по ТЗ и анатомии, без подбора',
     }
     return out
 
@@ -349,11 +350,12 @@ def main() -> int:
                     help='то же, но каждый кадр считает модель фолда, не видевшая его')
     ap.add_argument('--no-cnn', action='store_true',
                     help='без нейросети cnn_qc: вердикт по одной геометрии (базовая линия)')
+    ap.add_argument('--roi-rule', default='scan_length', choices=('scan_length', 'margins'))
     ap.add_argument('--out', type=Path, default=METRICS, help='куда положить метрики')
     args = ap.parse_args()
 
     d = run(args.hip_method, keypoints=args.keypoints, keypoints_oof=args.keypoints_oof,
-            cnn=not args.no_cnn)
+            cnn=not args.no_cnn, roi_rule=args.roi_rule)
     cnn_flags = int(d['flags'].str.contains('cnn:').sum())
     if cnn_flags:
         print(f'у {cnn_flags} кадров нет вердикта сети (флаг cnn:*): в OOF-режиме это кадры '

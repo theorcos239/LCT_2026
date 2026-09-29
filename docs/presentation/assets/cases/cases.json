@@ -7,12 +7,12 @@
     "violations": [
       "spine_axis"
     ],
-    "quality_probability": 0.6132,
+    "quality_probability": 0.6285,
     "angle": 8.72,
     "iliac": 0.0023,
     "art_len": 7.8,
-    "art_p": 0.0052,
-    "art_prob": 0.0752
+    "art_p": 0.1612,
+    "art_prob": 0.1119
   },
   "artifacts": {
     "file": "artifacts.png",
@@ -22,28 +22,30 @@
     "violations": [
       "spine_artifacts"
     ],
-    "quality_probability": 0.9896,
+    "quality_probability": 0.9927,
     "angle": 1.52,
     "iliac": 0.0,
     "art_len": 77.5,
     "art_p": 1.0,
-    "art_prob": 0.9875
+    "art_prob": 0.9912
   },
   "rotation": {
     "file": "rotation.png",
-    "study": "2.25.39068163399801173920284179500049527111",
-    "rel_path": "2.25.39068163399801173920284179500049527111/series_002_2_CR/A2504195842 DXA/CR DXA/CR000000.dcm",
-    "region": "rh",
+    "study": "2.25.66397484472966116002950503539482860450",
+    "rel_path": "2.25.66397484472966116002950503539482860450/series_001_2_CR/A2504194637 DXA/CR DXA/CR000000.dcm",
+    "region": "lh",
     "violations": [
       "hip_rotation"
     ],
-    "quality_probability": 0.9149,
-    "top": 38.2,
-    "bottom": 33.4,
-    "lat": 50.4,
-    "area": 7.9,
-    "rot_p": 0.9955,
-    "rot_prob": 0.9101
+    "quality_probability": 0.9323,
+    "top": 40.1,
+    "bottom": 27.3,
+    "lat": 46.1,
+    "scan_len": 142.6,
+    "need_len": 129.0,
+    "area": 12.0,
+    "rot_p": 0.9978,
+    "rot_prob": 0.925
   },
   "roi": {
     "file": "roi.png",
@@ -53,10 +55,12 @@
     "violations": [
       "hip_roi"
     ],
-    "quality_probability": 0.5335,
+    "quality_probability": 0.45,
     "top": 44.9,
     "bottom": 18.2,
     "lat": 26.1,
+    "scan_len": 125.0,
+    "need_len": 129.0,
     "area": 121.5,
     "rot_p": 0.0217,
     "rot_prob": 0.1209
@@ -67,25 +71,27 @@
     "rel_path": "2.25.156389075510671877606923458507011517218/series_001_2_CR/A2507389755 DXA/CR DXA/CR000002.dcm",
     "region": "spine",
     "violations": [],
-    "quality_probability": 0.1398,
+    "quality_probability": 0.1362,
     "angle": -0.8,
     "iliac": 0.1641,
     "art_len": 17.8,
-    "art_p": 0.0027,
-    "art_prob": 0.0861
+    "art_p": 0.0043,
+    "art_prob": 0.0823
   },
   "ok_hip": {
     "file": "ok_hip.png",
-    "study": "2.25.276415754443998872860614500027519740375",
-    "rel_path": "2.25.276415754443998872860614500027519740375/series_002_2_CR/A2504387089 DXA/CR DXA/CR000003.dcm",
+    "study": "2.25.13983650679559142983913935144968795415",
+    "rel_path": "2.25.13983650679559142983913935144968795415/series_003_2_CR/A2504335111 DXA/CR DXA/CR000002.dcm",
     "region": "lh",
     "violations": [],
-    "quality_probability": 0.0404,
-    "top": 51.6,
-    "bottom": 57.1,
-    "lat": 60.1,
-    "area": 211.2,
+    "quality_probability": 0.0408,
+    "top": 46.7,
+    "bottom": 67.4,
+    "lat": 22.5,
+    "scan_len": 175.4,
+    "need_len": 129.0,
+    "area": 234.4,
     "rot_p": 0.0006,
-    "rot_prob": 0.0384
+    "rot_prob": 0.0366
   }
 }

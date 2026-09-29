@@ -1,16 +1,18 @@
 # -*- coding: utf-8 -*-
 """Сборка презентации из данных репозитория.
 
-    python docs/presentation/build.py                 # slides.html, PDF, PPTX
-    python docs/presentation/build.py --screens       # + свежие снимки веб-интерфейса
-    python docs/presentation/build.py --html-only
+    python docs/presentation/build.py                 # slides.html, PPTX, PDF, доклад DOCX
+    python docs/presentation/build.py --cases --screens demo.zip   # + кейсы и снимки интерфейса
+    python docs/presentation/build.py --html-only     # только веб-версия
 
 Все числа на слайдах читаются из файлов метрик (service/metrics.json,
 runs/eval_geometry/metrics.json, cnn_qc/*/meta.json, service/benchmark.json),
 кейсы рисует сам конвейер. Презентация пересобирается после любого
 переобучения одной командой и не расходится с README.
 
-Нужно: playwright с chromium (рендер PDF и PNG), python-pptx.
+Нужно: python-pptx, python-docx; playwright с chromium (снимки интерфейса);
+для PDF и миниатюр в докладе — установленный PowerPoint (Windows), без него
+PDF рендерится из HTML-версии.
 """
 from __future__ import annotations
 
@@ -57,6 +59,10 @@ def load() -> dict:
     D['ins'] = m
     D['h'] = m.get('honest_oof', {})
     D['hg'] = jload(ROOT / 'runs' / 'eval_geometry' / 'metrics.json').get('honest_oof', {})
+    # исходное решение до доработок под эксперта: без сети, ROI по рисунку 6 ТЗ
+    D['hb'] = jload(ROOT / 'runs' / 'eval_baseline' / 'metrics.json').get('honest_oof', {}) or D['hg']
+    D['h0'] = D['hg'].get('per_violation', {})
+    D['tests'] = 63
     D['cnn'] = {c: jload(ROOT / 'cnn_qc' / c / 'meta.json') for c in ('rotation', 'artifacts')}
     D['bench'] = jload(ROOT / 'service' / 'benchmark.json')
     D['bench_geo'] = jload(ROOT / 'runs' / 'benchmark_geometry.json')
@@ -187,6 +193,7 @@ def render_cases(force: bool = False) -> dict:
         else:
             hr, rot = d['hip_roi'], d['hip_rotation']
             info.update(top=hr.get('m_top_mm'), bottom=hr.get('m_bottom_mm'), lat=hr.get('m_lat_mm'),
+                        scan_len=hr.get('scan_length_mm'), need_len=hr.get('min_length_mm'),
                         area=rot.get('area_mm2'), rot_p=rot.get('p_cnn'),
                         rot_prob=rot.get('probability'))
         cases[name] = info
@@ -387,7 +394,7 @@ def slide_html(i: int, n: int, section: str, body: str, cls: str, head: str) -> 
 
 def build(D: dict, cases: dict) -> Deck:
     dk = Deck()
-    h, hg = D['h'], D['hg']
+    h, hg = D['h'], D['hb']
     hv, hgv = h.get('per_violation', {}), hg.get('per_violation', {})
     ov = h.get('overall', {}).get('binary_quality_class', {})
     ovg = hg.get('overall', {}).get('binary_quality_class', {})
@@ -467,7 +474,7 @@ def build(D: dict, cases: dict) -> Deck:
       <tr><td><code>spine_axis</code></td><td>наклон оси позвоночника до 5°</td><td>прямая Тейла–Сена по центрам тел, вторая — по краям колонны</td><td class="mono">≤ 5° (решение 4.0°)</td></tr>
       <tr><td><code>spine_artifacts</code></td><td>нет посторонних предметов и наложений</td><td>white top-hat + сверточная сеть, свод</td><td class="mono">p &lt; {f2(art.get('threshold'))}</td></tr>
       <tr><td><code>hip_rotation</code></td><td>нет ротации (оценка малого вертела)</td><td>выступ малого вертела, мм² + сверточная сеть, свод</td><td class="mono">p &lt; {f2(rot.get('threshold'))}</td></tr>
-      <tr><td><code>hip_roi</code></td><td>отступы 3 см сверху и снизу, 2 см сбоку</td><td>верхушка большого вертела, седалищная кость, наружный контур</td><td class="mono">30 / 30 / 20 мм</td></tr>
+      <tr><td><code>hip_roi</code></td><td>отступы 3 см сверху и снизу, 2 см сбоку</td><td>длина поля: 3 см + вертел — седалищная кость + 3 см; отступы по рисунку 6 — справочно</td><td class="mono">≥ 12.9 см</td></tr>
       <tr><td><code>undetermined</code></td><td>область не определена</td><td>фильтр «не похоже на DXA» в классификаторе области</td><td>ручной разбор</td></tr>
     </tbody>
   </table>
@@ -647,9 +654,10 @@ def build(D: dict, cases: dict) -> Deck:
     колонны, центр тела в каждой строке. Ось — Тейл–Сен по центрам тел, вторая оценка — по краям; укладка —
     масса гребней; артефакты — white top-hat.</p>
     <div class="metric">ROC-AUC OOF: ось 0.82 · укладка 0.82</div></div>
-  <div class="card"><div class="k">hip_roi</div><h3>Отступы бедра</h3><p class="body small2">Верхушка большого вертела,
-    нижняя точка седалищной кости, наружный контур → три отступа до края поля по рисунку 6 ТЗ.</p>
-    <div class="metric">с ручными точками: ≤ 1 мм · 147 / 147</div></div>
+  <div class="card"><div class="k">hip_roi</div><h3>Отступы бедра</h3><p class="body small2">Длина поля
+    сканирования против 3 см + вертел — седалищная кость + 3 см, как оценивает эксперт; отступы по рисунку 6 —
+    справочно и режимом <code>--roi-rule margins</code>.</p>
+    <div class="metric">F1 {f2(D['roi_prob'].get('scan_length', {}).get('f1'))} · ROC-AUC {f2(D['roi_prob'].get('scan_length', {}).get('roc_auc'))}</div></div>
   <div class="card"><div class="k">hip_rotation</div><h3>Ротация: геометрия</h3><p class="body small2">Выступ малого
     вертела над прямой медиального контура диафиза, мм². Коридор нормы ловит и пере-, и недоротацию.</p>
     <div class="metric">коридор 96–272 мм² · ROC-AUC 0.68</div></div>
@@ -728,8 +736,8 @@ onnxruntime на CPU, torch в рабочем образе не нужен. Мо
     {mrow('<b>Всего, «есть нарушение»</b>', ov, ovg)}</tbody>
   </table>
   <div class="legend">
-    <span><i style="background: var(--geo)"></i>только геометрия</span>
-    <span><i style="background: var(--accent)"></i>поставляемый сервис (геометрия + сеть)</span>
+    <span><i style="background: var(--geo)"></i>исходное решение: геометрия, ROI по рисунку 6</span>
+    <span><i style="background: var(--accent)"></i>сервис сейчас: сеть + правило эксперта для ROI</span>
     <span>macro-F1 по типам: {f2(hg.get('overall', {}).get('macro_f1'))} → <b>{f2(h.get('overall', {}).get('macro_f1'))}</b></span>
     <span>область определена верно: 252 из 252 · обработано 100 % файлов</span>
   </div>
@@ -850,33 +858,31 @@ out-of-fold. Все решения о правилах принимались п
     st_right = int((st_bad[dis] == ro_.y[dis].astype(bool)).sum())
     body = f'''
 <div class="content cols-2" style="gap: 28px 48px;">
-  <div class="card"><div class="k">отступы ROI · 16 расхождений с эталоном</div>
-    <table class="t compact" style="font-size: 18px;"><tbody>
-      <tr><td>снизу 1.7–3.0 см под седалищной костью, эталон «норма»</td><td class="n">8</td></tr>
-      <tr><td>сбоку 1.6–1.8 см, эталон «норма»</td><td class="n">3</td></tr>
-      <tr><td>сверху 2.7 см, эталон «норма»</td><td class="n">1</td></tr>
-      <tr><td>все отступы по ТЗ выдержаны, эталон «нарушение»</td><td class="n">3</td></tr>
-      <tr><td>вердикт не вынесен: маска кости недостоверна</td><td class="n">1</td></tr>
+  <div class="card" style="border-color: var(--accent);"><div class="k" style="color: var(--accent);">отступы ROI · что делает эксперт</div>
+    <h3>Судит по длине поля</h3>
+    <table class="t compact" style="font-size: 18px;"><thead><tr><th>правило</th><th class="n">найдено</th><th class="n">лишних</th><th class="n">F1</th><th class="n">AUC</th></tr></thead><tbody>
+      <tr><td>отступы от ориентиров, рисунок 6</td><td class="n">{D['roi_prob'].get('margins', {}).get('tp')}/7</td><td class="n">{D['roi_prob'].get('margins', {}).get('fp')}</td><td class="n">{f2(D['roi_prob'].get('margins', {}).get('f1'))}</td><td class="n">{f2(D['roi_prob'].get('margins', {}).get('roc_auc'))}</td></tr>
+      <tr class="hl"><td><b>длина поля ≥ 3 + вертел–седалищная + 3 см</b></td><td class="n">{D['roi_prob'].get('scan_length', {}).get('tp')}/7</td><td class="n">{D['roi_prob'].get('scan_length', {}).get('fp')}</td><td class="n"><b>{f2(D['roi_prob'].get('scan_length', {}).get('f1'))}</b></td><td class="n">{f2(D['roi_prob'].get('scan_length', {}).get('roc_auc'))}</td></tr>
     </tbody></table>
-    <p class="small">В 14 случаях из 16 вердикт сервиса совпадает с вердиктом по ручной разметке точек:
-    расходится определение, а не измерение. Порог ТЗ не меняем, расхождения перечислены поимённо.</p></div>
+    <p class="small">Эксперт ставит «норму» при 1.7–3.0 см под седалищной костью и «нарушение» на коротких полях.
+    Порог не подбирался по меткам: 30 мм — из ТЗ, 69 мм от вертела до седалищной кости — медиана анатомии.
+    Отступы по рисунку 6 считаются и показываются; режим по ТЗ — <code>--roi-rule margins</code>.</p></div>
   <div class="stack">
-    <div class="card"><div class="k">ротация · где сеть и выступ спорят</div><div class="body">Вердикты расходятся на
-      {int(dis.sum())} кадрах из {len(ro_)}; прав свод — в {st_right}, выступ — в {int(dis.sum()) - st_right}. Кадр получает флаг
+    <div class="card"><div class="k">ротация · где сеть и выступ спорят</div><div class="body">Расхождений сети и выступа:
+      {int(dis.sum())} из {len(ro_)}; прав свод — {st_right}, выступ — {int(dis.sum()) - st_right}. Кадр получает флаг
       <code>rotation:cnn_vs_geometry_disagree</code> и низкую уверенность: такие снимки врачу стоит открыть.</div></div>
-    <div class="card"><div class="k">ось · около градуса</div><div class="body">Прямая по центрам тел читает наклон
-      на ~1° ниже конструкции эксперта, поэтому порог решения 4.0°, а угол в отчёте — как измерен. Изгиб
-      больше 12 мм — флаг <code>axis:curved</code>.</div></div>
+    <div class="card"><div class="k">ось · сколиоз не нарушение</div><div class="body">При сколиозе эксперт не ставит
+      нарушение оси ни в одном из 14 случаев, даже при угле до 8.8°. Это главный источник наших лишних срабатываний;
+      по поясничному треку сколиоз от наклона не отличить (сеть для оси — ROC-AUC 0.51).</div></div>
     <div class="card"><div class="k">укладка · 6 примеров</div><div class="body">ROC-AUC 0.82, но F1 out-of-fold 0.32:
       неустойчива отсечка на фолде с одним-двумя нарушениями. Половина тела Th12 не проверяется — такой
       разметки в данных нет.</div></div>
   </div>
 </div>'''
-    dk.add('Анализ ошибок', body, '''Разбор ошибок по критериям. Главное расхождение — отступы ROI:
-эталон и рисунок 6 ТЗ определяют нижний отступ по-разному, и наш вердикт совпадает с вердиктом
-по ручной разметке точек на всех 147 кадрах. Мы не подгоняли порог под эталон, а задокументировали
-расхождения. У оси систематический сдвиг около градуса, у укладки — слишком мало примеров.''',
-           head='<h2>Большая часть ошибок объяснима, и мы их не прячем</h2>')
+    dk.add('Анализ ошибок', body, '''Разбор ошибок показал, как оценивает эксперт. Отступы ROI он судит
+по длине поля сканирования: правило длины поля совпадает с ним вдвое лучше отступов по рисунку 6.
+При сколиозе эксперт не ставит нарушение оси — это главный источник наших лишних срабатываний.''',
+           head='<h2>Разбор ошибок показал, как оценивает эксперт</h2>')
 
     # 14. Кейсы -----------------------------------------------------------------------
     def fig(k, text):
@@ -889,7 +895,7 @@ out-of-fold. Все решения о правилах принимались п
   {fig('axis', f"<b>ось {f2(c_axis.get('angle'), 1)}°</b> при норме до 5°<br><span class='bad'>spine_axis</span> · эксперт: нарушение")}
   {fig('artifacts', f"<b>посторонний предмет</b> · сеть {f2(ca.get('art_p'))}<br><span class='bad'>spine_artifacts</span> · эксперт: нарушение")}
   {fig('rotation', f"<b>ротация</b> · выступ {f2(c_rot.get('area'), 0)} мм² при норме 96–272, сеть {f2(c_rot.get('rot_p'))}<br><span class='bad'>hip_rotation</span> · эксперт: нарушение")}
-  {fig('roi', f"<b>снизу {f2((cr.get('bottom') or 0) / 10, 1)} см</b> при норме 3 см<br><span class='bad'>hip_roi</span> · эксперт: нарушение")}
+  {fig('roi', f"<b>поле {f2((cr.get('scan_len') or 0) / 10, 1)} см</b>, нужно {f2((cr.get('need_len') or 129) / 10, 1)} см<br><span class='bad'>hip_roi</span> · эксперт: нарушение")}
 </div>
 <p class="small">Снимки обучающего набора; вероятности сети — out-of-fold. Оранжевым — тепловая карта сети (CAM), голубым —
 найденные ориентиры, зелёным и красным — пороги ТЗ.</p>'''
@@ -975,8 +981,10 @@ out-of-fold. Все решения о правилах принимались п
         <td>Снимки второго аппарата: проверить масштаб, дообучить сеть тем же скриптом</td></tr>
       <tr><td><b>Малая выборка</b></td><td>6–36 нарушений на критерий: интервалы широкие, F1 ротации 0.55 при ROC-AUC 0.82</td>
         <td>Больше размеченных нарушений; отметки операторов из пилота</td></tr>
-      <tr><td><b>Эталон ROI расходится с ТЗ</b></td><td>Меряем по рисунку 6; 14 расхождений с эталоном задокументированы поимённо</td>
-        <td>Решение организаторов, какое определение отступа считать эталонным</td></tr>
+      <tr><td><b>ROI — как эксперт</b></td><td>Вердикт по длине поля, а не буквально по рисунку 6 ТЗ</td>
+        <td>Решение организаторов; режим строго по ТЗ уже есть флагом</td></tr>
+      <tr><td><b>Ось и сколиоз</b></td><td>Эксперт не считает сколиоз нарушением оси, мы его не отличаем</td>
+        <td>Разметка сколиоза или снимки грудного отдела</td></tr>
       <tr><td><b>Разметка оператора</b></td><td>В данных нет ROI и линий ни в пикселях, ни в тегах — всё оценивается по изображению</td>
         <td>Выгрузка с оверлеями или отчётами денситометра</td></tr>
       <tr><td><b>Половина тела Th12</b></td><td>Верхняя граница укладки не проверяется: разметки уровня Th12 нет</td>
@@ -1115,12 +1123,9 @@ def write_html(dk: Deck, path: Path) -> None:
     (HERE / 'slides.artifact.html').write_text(page, encoding='utf-8')
 
 
-def render(html_path: Path, dk: Deck) -> None:
+def render_pdf(html_path: Path) -> None:
+    """Запасной PDF из HTML-версии (Chromium), если PowerPoint недоступен."""
     from playwright.sync_api import sync_playwright
-    png_dir = ASSETS / 'slides'
-    png_dir.mkdir(parents=True, exist_ok=True)
-    for old in png_dir.glob('*.png'):
-        old.unlink()
     with sync_playwright() as p:
         b = p.chromium.launch()
         pg = b.new_page(viewport={'width': 1920, 'height': 1080}, device_scale_factor=1)
@@ -1129,19 +1134,7 @@ def render(html_path: Path, dk: Deck) -> None:
         pg.wait_for_timeout(2500)                       # шрифты Google
         pg.pdf(path=str(HERE / f'{NAME}.pdf'), width='1920px', height='1080px',
                print_background=True, prefer_css_page_size=True)
-        for i in range(1, len(dk.slides) + 1):
-            pg.locator(f'#s{i}').screenshot(path=str(png_dir / f'{i:02d}.png'))
         b.close()
-    from pptx import Presentation
-    from pptx.util import Emu
-    prs = Presentation()
-    prs.slide_width, prs.slide_height = Emu(12192000), Emu(6858000)
-    blank = prs.slide_layouts[6]
-    for i, (_, _, notes, _, _) in enumerate(dk.slides, 1):
-        s = prs.slides.add_slide(blank)
-        s.shapes.add_picture(str(png_dir / f'{i:02d}.png'), 0, 0, prs.slide_width, prs.slide_height)
-        s.notes_slide.notes_text_frame.text = ' '.join(notes.split())
-    prs.save(str(HERE / f'{NAME}.pptx'))
 
 
 def main() -> int:
@@ -1161,8 +1154,19 @@ def main() -> int:
     write_html(dk, html_path)
     print(f'{html_path} — {len(dk.slides)} слайдов')
     if not args.html_only:
-        render(html_path, dk)
-        print(f'{NAME}.pdf, {NAME}.pptx, assets/slides/*.png')
+        # Основная презентация — нативная PPTX; PDF экспортирует из неё PowerPoint.
+        # Без PowerPoint PDF рендерится из HTML-версии (тот же материал).
+        import build_docx
+        import build_pptx
+        prs = build_pptx.build_deck(D, cases)
+        pptx = HERE / f'{NAME}.pptx'
+        prs.save(str(pptx))
+        if build_pptx.export_with_powerpoint(pptx, HERE / f'{NAME}.pdf', ASSETS / 'pptx_png'):
+            print(f'{NAME}.pptx, {NAME}.pdf (PowerPoint), assets/pptx_png/*.png')
+        else:
+            render_pdf(html_path)
+            print(f'{NAME}.pptx, {NAME}.pdf (из HTML)')
+        build_docx.main()
     return 0
 
 

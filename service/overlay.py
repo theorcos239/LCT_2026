@@ -91,8 +91,19 @@ def render(px: np.ndarray, row: dict, scale: int = 2) -> Image.Image:
         return img
     if region in ('lh', 'rh'):
         from hip_roi.kits import measure_roi_margins
+        from hip_roi.overlay import _font
         from hip_roi.overlay import render_overlay as hip_overlay
-        img = hip_overlay(px, measure_roi_margins(px, region, 'kit2'))
+        res = measure_roi_margins(px, region, 'kit2')
+        hr = details.get('hip_roi') or {}
+        if hr.get('roi_rule') == 'scan_length' and hr.get('scan_length_mm') is not None:
+            # Вердикт — по длине поля (как оценивает эксперт); линии отступов
+            # по рисунку 6 ТЗ остаются на снимке справочно.
+            _, cyr = _font(12)
+            L, need = hr['scan_length_mm'] / 10, hr['min_length_mm'] / 10
+            note = (f'поле {L:.1f} см, нужно {need:.1f} см' if cyr else
+                    f'field {L:.1f} cm, need {need:.1f} cm')
+            res = {**res, 'roi_ok': hr.get('roi_ok'), 'flags': [note] + list(res.get('flags', []))}
+        img = hip_overlay(px, res)
         rot = details.get('hip_rotation') or {}
         if rot.get('violated') and rot.get('p_cnn') is not None:
             img = _heat(img, px, 'rotation', region,

@@ -17,8 +17,8 @@
 | `region_clf` | классификатор области lh / rh / spine + фильтр «не DXA» | `region_clf/model.joblib`, `metrics.json` |
 | `spine_qc` | пороги трёх критериев позвоночника + модель «вида кадра» (вторая оценка) | `spine_qc/model.joblib`, `thresholds.json`, `metrics.json`, `measurements.csv` |
 | `hip_rotation` | коридор нормы выступа малого вертела, вероятность (Платт) | `hip_rotation/thresholds.json`, `metrics.json`, `measurements.csv` |
-| `hip_roi` | пороги 3/3/2 см взяты из ТЗ; учится только вероятность (Платт по недобору отступа) | `hip_roi/probability.json`; `hip_roi/eval/` — сверка с экспертом |
-| `cnn_qc` | ResNet-34, ансамбль 3 сидов на критерий, свод с геометрией и порог (torch, onnx) | `cnn_qc/<критерий>/model_{0,1,2}.onnx`, `meta.json`, `oof.csv` |
+| `hip_roi` | пороги 3/3/2 см взяты из ТЗ, нужная длина поля 12.9 см — из ТЗ и медианы анатомии; учится только вероятность (Платт по недобору длины поля и, отдельно, по недобору отступа) | `hip_roi/probability.json` — оба правила; `hip_roi/eval/` — сверка с экспертом |
+| `cnn_qc` | ResNet-34, ансамбль 3 сидов на критерий, свод с геометрией и порог (torch, onnx); сеть посторонних предметов стартует с энкодера модели ключевых точек | `cnn_qc/<критерий>/model_{0,1,2}.onnx`, `meta.json`, `oof.csv` |
 | `src/dxa_qc` | модель ключевых точек (необязательная, torch) | `runs/keypoints/` — вне git |
 
 ## Данные
@@ -52,14 +52,21 @@ python -m region_clf.train --stress   # 2. классификатор облас
 python -m spine_qc.calibrate --sweep  # 3. пороги позвоночника, OOF-метрики
 python -m hip_rotation.calibrate      # 4. коридор нормы ротации
 python -m hip_roi.evaluate            # 5. сверка ROI бедра с экспертом
-python -m hip_roi.probability         #    вероятность нарушения отступов
+python -m hip_roi.probability         #    вероятность нарушения ROI: длина поля и рисунок 6
 python -m pip install -r requirements-train.txt  # torch, onnx — только для шага 6
 python -m cnn_qc.train --criterion rotation      # 6. сеть: OOF, свод, ансамбль, ONNX
-python -m cnn_qc.train --criterion artifacts
+python -m cnn_qc.train --criterion artifacts --init keypoints   # нужны runs/keypoints/fold*.pt
 python -m service.evaluate            # 7. сквозные метрики с 95% ДИ + честная оценка
 python -m service.evaluate --no-cnn --out runs/eval_geometry/metrics.json
+python -m service.evaluate --no-cnn --roi-rule margins --out runs/eval_baseline/metrics.json
 python -m service.benchmark           #    скорость на всех исследованиях
 ```
+
+Сеть посторонних предметов стартует с энкодера модели ключевых точек
+(`--init keypoints`): для фолда k — модели, обученной без фолда k. Веса
+`runs/keypoints/fold*.pt` лежат вне git, поэтому сначала обучите модель точек
+(раздел ниже). Без них — `--init imagenet`: прежняя поставка, свод ROC-AUC 0.82
+против 0.85.
 
 Шаги 2–5 независимы друг от друга; шаг 6 читает измерения шагов 3–4
 (`spine_qc/measurements.csv`, `hip_rotation/measurements.csv`) — свод сети

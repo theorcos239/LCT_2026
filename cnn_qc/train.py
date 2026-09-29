@@ -95,7 +95,7 @@ def load_frames(criterion: str, pixels: bool = True) -> tuple[pd.DataFrame, np.n
 # --------------------------------------------------------------------------- #
 #  Модель
 # --------------------------------------------------------------------------- #
-def build_model(pretrained: bool = True):
+def build_model(pretrained: bool = True, init_ckpt: Path | None = None):
     import torch
     import torch.nn as nn
     import torchvision
@@ -112,6 +112,13 @@ def build_model(pretrained: bool = True):
             super().__init__()
             w = 'IMAGENET1K_V1' if pretrained else None
             r = torchvision.models.resnet34(weights=w)
+            if init_ckpt is not None:
+                # Энкодер модели ключевых точек (src/dxa_qc): тот же ResNet-34,
+                # но уже обученный на снимках DXA находить вертелы и позвонки.
+                sd = torch.load(str(init_ckpt), map_location='cpu', weights_only=False)['model']
+                enc = {k[len('encoder.'):]: v for k, v in sd.items() if k.startswith('encoder.')}
+                missing, _ = r.load_state_dict(enc, strict=False)
+                assert all(k.startswith('fc.') for k in missing), missing
             self.body = nn.Sequential(r.conv1, r.bn1, r.relu, r.maxpool,
                                       r.layer1, r.layer2, r.layer3, r.layer4)
             self.drop = nn.Dropout(RECIPE['dropout'])
@@ -187,14 +194,15 @@ def seed_everything(seed: int) -> None:
     torch.use_deterministic_algorithms(True, warn_only=True)
 
 
-def fit(X: np.ndarray, y: np.ndarray, idx: np.ndarray, seed: int, hflip: bool, device):
+def fit(X: np.ndarray, y: np.ndarray, idx: np.ndarray, seed: int, hflip: bool, device,
+        init_ckpt: Path | None = None):
     """Одна модель на кадрах idx по рецепту RECIPE."""
     import torch
     import torch.nn.functional as F
 
     seed_everything(seed)
     g = torch.Generator().manual_seed(seed)
-    model = build_model().to(device)
+    model = build_model(init_ckpt=init_ckpt).to(device)
     bs, ep = RECIPE['batch_size'], RECIPE['epochs']
     opt = torch.optim.AdamW(model.parameters(), lr=RECIPE['lr'],
                             weight_decay=RECIPE['weight_decay'])
@@ -361,10 +369,20 @@ def main() -> int:
                     help='вердикт по своду сети с геометрией или по одной сети')
     ap.add_argument('--threshold-rule', choices=('prevalence', 'f1'), default='prevalence',
                     help='порог: доля нарушений (по умолчанию) или максимум F1')
+    ap.add_argument('--init', choices=('imagenet', 'keypoints'), default='imagenet',
+                    help='энкодер: ImageNet или энкодер модели ключевых точек того же фолда')
+    ap.add_argument('--tag', default='', help='эксперимент: писать в cnn_qc/<критерий>_<tag>/')
     args = ap.parse_args()
+    RECIPE['init'] = args.init
+    kp_dir = ROOT / 'runs' / 'keypoints'
+
+    def init_for(fold):
+        # Для фолда k — энкодер модели точек, обученной без фолда k: снимки
+        # отложенного фолда не видела ни одна из двух моделей.
+        return kp_dir / f'fold{int(fold) % 5}.pt' if args.init == 'keypoints' else None
 
     cfg = CRITERIA[args.criterion]
-    out = HERE / args.criterion
+    out = HERE / (args.criterion + (f'_{args.tag}' if args.tag else ''))
     out.mkdir(exist_ok=True)
     dev = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     t0 = time.time()
@@ -383,7 +401,7 @@ def main() -> int:
         p = np.zeros(len(df))
         for k in sorted(df.fold.unique()):
             tr, te = np.where(df.fold != k)[0], np.where(df.fold == k)[0]
-            m = fit(X, y, tr, seed * 100 + int(k), cfg['hflip'], dev)
+            m = fit(X, y, tr, seed * 100 + int(k), cfg['hflip'], dev, init_for(k))
             p[te] = predict_torch(m, X[te], cfg['hflip'], dev)
             del m
         oof[seed] = p
@@ -458,7 +476,7 @@ def main() -> int:
             stale.unlink()
         files, diffs = [], []
         for i, seed in enumerate(args.seeds):
-            m = fit(X, y, np.arange(len(df)), seed * 100 + 99, cfg['hflip'], dev)
+            m = fit(X, y, np.arange(len(df)), seed * 100 + 99, cfg['hflip'], dev, init_for(i))
             p_torch = predict_torch(m, X, cfg['hflip'], dev)
             name = f'model_{i}.onnx'
             export_onnx(m, out / name, SIZE)

@@ -79,11 +79,16 @@ class Analyzer:
     strict_region: bool = True      # непринятый кадр не отправляем на критерии
     keypoints: object = None        # модель ключевых точек; None — контурная геометрия
     cnn: object = None              # cnn_qc: второе мнение по ротации и артефактам
+    # Вердикт по отступам ROI: 'scan_length' — хватает ли длины поля (так
+    # отступы оценивает эксперт, F1 0.71 против его разметки), 'margins' —
+    # отступы от найденных ориентиров буквально по рисунку 6 ТЗ (F1 0.35).
+    # Отступы по рисунку 6 считаются и показываются в обоих режимах.
+    roi_rule: str = 'scan_length'
 
     @classmethod
     def load(cls, hip_method: str = 'kit2', strict_region: bool = True,
              keypoints: bool = False, keypoints_dir=None, cnn: bool = True,
-             cnn_oof: bool = False) -> 'Analyzer':
+             cnn_oof: bool = False, roi_rule: str = 'scan_length') -> 'Analyzer':
         """keypoints=True подключает модель ключевых точек (`runs/keypoints`).
 
         Она забирает себе два измерения — угол оси позвоночника и отступы ROI
@@ -112,7 +117,7 @@ class Analyzer:
                 kp = _Unavailable(f'{type(e).__name__}: {e}')
         return cls(region=RegionClassifier(), spine=SpineQC(),
                    hip_method=hip_method, strict_region=strict_region, keypoints=kp,
-                   cnn=net)
+                   cnn=net, roi_rule=roi_rule)
 
     # ------------------------------------------------------------------ #
     def _keypoints(self, px: np.ndarray, region: str, out: dict) -> dict | None:
@@ -247,7 +252,7 @@ class Analyzer:
                     out['violations'].append(key)
         else:
             from hip_roi import probability as roi_probability
-            from hip_roi.kits import measure_roi_margins
+            from hip_roi.kits import measure_roi_margins, scan_field
             from hip_rotation import THRESHOLDS as ROT_THR
             from hip_rotation import detect as detect_rotation
 
@@ -267,10 +272,20 @@ class Analyzer:
                 roi = kp['roi']
             out['details']['hip_roi'] = {k: v for k, v in roi.items() if k != 'diag'}
             out['flags'] += list(roi.get('flags', []))
-            if roi.get('roi_ok') is False:
+            hr = out['details']['hip_roi']
+            hr['margins_ok'] = roi.get('roi_ok')          # отступы по рисунку 6 ТЗ
+            hr.update(scan_field(px))
+            hr['roi_rule'] = self.roi_rule
+            if self.roi_rule == 'scan_length':
+                hr['roi_ok'] = hr['field_ok']
+                hr['violation_text'] = '' if hr['field_ok'] else (
+                    f"поле сканирования {hr['scan_length_mm'] / 10:.1f} см короче "
+                    f"{hr['min_length_mm'] / 10:.1f} см: отступы 3 см сверху и снизу "
+                    f"от области интереса не помещаются")
+            if hr.get('roi_ok') is False:
                 out['violations'].append('hip_roi')
-            # Вероятность — от того же измерения, что и вердикт (контур или точки).
-            p_roi = roi_probability.apply(roi)
+            # Вероятность — от того же измерения, что и вердикт.
+            p_roi = roi_probability.apply(hr, self.roi_rule)
             out['details']['hip_roi']['probability'] = p_roi
             out['probabilities']['hip_roi'] = p_roi
 

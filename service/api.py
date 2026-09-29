@@ -80,7 +80,8 @@ def analyzer() -> Analyzer:
         if _analyzer is None:
             _analyzer = Analyzer.load(
                 keypoints=os.environ.get('DXA_QC_KEYPOINTS', '') not in ('', '0', 'false'),
-                cnn=os.environ.get('DXA_QC_CNN', '1') not in ('0', 'false'))
+                cnn=os.environ.get('DXA_QC_CNN', '1') not in ('0', 'false'),
+                roi_rule=os.environ.get('DXA_QC_ROI_RULE', 'scan_length'))
     return _analyzer
 
 
@@ -178,7 +179,7 @@ def version() -> dict:
     from hip_rotation import THRESHOLDS as ROT
     from hip_roi.geometry import BOTTOM_MM, LAT_MM, TOP_MM
     from spine_qc.geometry import AXIS_LIMIT_DEG
-    return {'version': VERSION, 'hip_method': a.hip_method,
+    return {'version': VERSION, 'hip_method': a.hip_method, 'roi_rule': a.roi_rule,
             'spine_thresholds': {k: v for k, v in a.spine.thresholds.items()
                                  if not isinstance(v, dict)},
             'rotation_corridor_mm2': [ROT['area_lo'], ROT['area_hi']],

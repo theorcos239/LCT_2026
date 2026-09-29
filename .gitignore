@@ -24,9 +24,14 @@ runs/**
 !runs/eval_geometry/
 !runs/eval_geometry/metrics.json
 !runs/benchmark_geometry.json
+# Исходное решение до доработок под эксперта: без сети, ROI по рисунку 6 ТЗ
+!runs/eval_baseline/
+!runs/eval_baseline/metrics.json
 
-# Презентация: PNG слайдов — промежуточный рендер для PPTX
+# Презентация: PNG слайдов — промежуточный рендер (HTML-скриншоты и экспорт
+# PowerPoint для миниатюр в докладе .docx)
 docs/presentation/assets/slides/
+docs/presentation/assets/pptx_png/
 
 # Демо-архив (python docs/presentation/make_demo_zip.py)
 /demo.zip

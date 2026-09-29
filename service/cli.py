@@ -41,6 +41,9 @@ def main(argv: list[str] | None = None) -> int:
                          'точек (нужен torch и веса в runs/keypoints)')
     ap.add_argument('--keypoints-dir', type=Path,
                     help='каталог с весами модели точек (по умолчанию runs/keypoints)')
+    ap.add_argument('--roi-rule', default='scan_length', choices=('scan_length', 'margins'),
+                    help='отступы ROI: длина поля, как оценивает эксперт (по умолчанию), '
+                         'или отступы от ориентиров буквально по рисунку 6 ТЗ')
     ap.add_argument('--no-cnn', action='store_true',
                     help='без нейросетевого второго мнения (cnn_qc): вердикт по одной геометрии')
     ap.add_argument('--json', action='store_true', help='сводку вывести как JSON')
@@ -66,7 +69,7 @@ def main(argv: list[str] | None = None) -> int:
                              strict_region=not args.lenient_region,
                              keypoints=args.keypoints,
                              keypoints_dir=args.keypoints_dir,
-                             cnn=not args.no_cnn)
+                             cnn=not args.no_cnn, roi_rule=args.roi_rule)
     if args.keypoints and analyzer.keypoints is not None and not analyzer.keypoints.available:
         print(f'модель точек не загружена: {analyzer.keypoints.error}\n'
               'кадры будут посчитаны контурной геометрией', file=sys.stderr)

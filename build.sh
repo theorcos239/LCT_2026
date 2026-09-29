@@ -21,8 +21,10 @@ fi
 # работать на одной геометрии и молча потеряет часть критериев.
 for f in region_clf/model.joblib spine_qc/model.joblib spine_qc/thresholds.json \
          hip_rotation/thresholds.json hip_roi/probability.json \
-         cnn_qc/rotation/model.onnx cnn_qc/rotation/meta.json \
-         cnn_qc/artifacts/model.onnx cnn_qc/artifacts/meta.json; do
+         cnn_qc/rotation/model_0.onnx cnn_qc/rotation/model_1.onnx \
+         cnn_qc/rotation/model_2.onnx cnn_qc/rotation/meta.json \
+         cnn_qc/artifacts/model_0.onnx cnn_qc/artifacts/model_1.onnx \
+         cnn_qc/artifacts/model_2.onnx cnn_qc/artifacts/meta.json; do
     if [ ! -f "$HERE/$f" ]; then
         echo "не найден файл модели: $f" >&2
         echo "обучите заново, см. docs/TRAINING.md (region_clf.train, spine_qc.calibrate," >&2

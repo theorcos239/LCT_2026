@@ -768,12 +768,20 @@ function criteria(r) {
   }
   if (d.hip_roi) {
     const roi = d.hip_roi, m = S.cfg.roi_margins_mm || { top: 30, bottom: 30, lat: 20 };
+    const byField = roi.roi_rule === 'scan_length' && roi.scan_length_mm != null;
+    if (roi.scan_length_mm != null)
+      out.push({ name: 'Длина поля сканирования', ok: roi.field_ok == null ? null : roi.field_ok,
+        val: `${fmt(roi.scan_length_mm / 10)} см`, norm: `≥ ${fmt(roi.min_length_mm / 10)} см`,
+        note: byField ? '3 см + от вертела до седалищной кости + 3 см: по этому признаку отступы оценивает эксперт, на нём вердикт'
+                      : 'справочно: вердикт по отступам от ориентиров',
+        bar: { v: roi.scan_length_mm, lo: roi.min_length_mm, hi: Infinity, max: Math.max(roi.min_length_mm * 1.6, roi.scan_length_mm * 1.1) } });
     for (const [k, ok, name, ref, norm] of [['m_top_mm', 'top_ok', 'Отступ сверху', 'от верхушки большого вертела', m.top],
                                            ['m_bottom_mm', 'bottom_ok', 'Отступ снизу', 'от нижней точки седалищной кости', m.bottom],
                                            ['m_lat_mm', 'lat_ok', 'Отступ сбоку', 'от наружного контура бедра', m.lat]]) {
       const v = roi[k];
       out.push({ name, ok: roi[ok], val: v == null ? 'не измерен' : `${fmt(v / 10)} см`, norm: `≥ ${fmt(norm / 10, 0)} см`,
-        note: `${ref} до края поля`, bar: v == null ? null : { v, lo: norm, hi: Infinity, max: Math.max(norm * 2.5, v * 1.1) } });
+        note: `${ref} до края поля` + (byField ? ' · по рисунку 6 ТЗ, справочно' : ''),
+        bar: v == null ? null : { v, lo: norm, hi: Infinity, max: Math.max(norm * 2.5, v * 1.1) } });
     }
   }
   if (d.hip_rotation) {
