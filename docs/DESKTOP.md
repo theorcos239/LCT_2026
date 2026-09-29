@@ -11,7 +11,7 @@ Docker, и тот, кто собирает установщик. Пошагов�
 
 ## Установка
 
-1. Скачайте [DXA-QC-Setup-1.0.0.exe](https://github.com/theorcos239/LCT_2026/raw/master/release/DXA-QC-Setup-1.0.0.exe) (288 МБ; контрольная сумма —
+1. Скачайте [DXA-QC-Setup-1.0.0.exe](https://github.com/theorcos239/LCT_2026/raw/master/release/DXA-QC-Setup-1.0.0.exe) (около 290 МБ; контрольная сумма —
    в [release/README.md](../release/README.md)) и запустите. Права администратора не нужны:
    приложение ставится в `%LOCALAPPDATA%\Programs\DXA-QC`. Для всех
    пользователей компьютера — выберите это в первом окне мастера.

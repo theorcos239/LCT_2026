@@ -34,7 +34,7 @@ FMT=csv ./run.sh batch /путь/к/закрытому_набору  # то же
 Папка с данными монтируется только на чтение.
 
 **Без Docker.** Windows — [установщик настольного приложения](https://github.com/theorcos239/LCT_2026/raw/master/release/DXA-QC-Setup-1.0.0.exe)
-(288 МБ, [DESKTOP.md](DESKTOP.md)), затем `dxa-qc-cli batch папка --out report.xlsx`.
+(около 290 МБ, [DESKTOP.md](DESKTOP.md)), затем `dxa-qc-cli batch папка --out report.xlsx`.
 Любая ОС с Python 3.11 — `pip install -r requirements.lock` и
 `python -m service.cli папка --out report.xlsx`. Все три пути дают один и тот
 же отчёт: контейнер, установленное приложение и локальный Python сверены на

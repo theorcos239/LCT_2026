@@ -23,7 +23,7 @@
 |---|---|---|
 | **контейнер** | пакетная обработка, API, веб-интерфейс на сервере | `./build.sh`, `./run.sh` — ниже в этом README |
 | **веб-приложение** | загрузка папки или zip, снимки с разметкой, отметки специалиста, выгрузки; устанавливается из браузера как приложение | `http://localhost:8000/` — [USER_GUIDE.md](docs/USER_GUIDE.md) |
-| **настольное приложение для Windows** | то же без Docker: установщик, окно, пакетная обработка из консоли | [DXA-QC-Setup-1.0.0.exe](https://github.com/theorcos239/LCT_2026/raw/master/release/DXA-QC-Setup-1.0.0.exe) (288 МБ, [release/](release/README.md)) — [DESKTOP.md](docs/DESKTOP.md) |
+| **настольное приложение для Windows** | то же без Docker: установщик, окно, пакетная обработка из консоли | [DXA-QC-Setup-1.0.0.exe](https://github.com/theorcos239/LCT_2026/raw/master/release/DXA-QC-Setup-1.0.0.exe) (около 290 МБ, [release/](release/README.md)) — [DESKTOP.md](docs/DESKTOP.md) |
 | **Telegram-бот** | показать сервис с телефона; только обезличенные данные | [@LCT_bone_density_research_bot](https://t.me/LCT_bone_density_research_bot) — [TELEGRAM_BOT.md](docs/TELEGRAM_BOT.md) |
 
 Без контейнера и установщика, на любой ОС с Python 3.11:
