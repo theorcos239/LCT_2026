@@ -48,6 +48,23 @@ def resource(*parts: str) -> Path:
     return base.joinpath(*parts)
 
 
+def build_info() -> dict:
+    """Из какого коммита собрано приложение: build_info.json пишет
+    desktop/build_windows.ps1 перед сборкой. Из исходников его нет."""
+    try:
+        return json.loads(resource('desktop', 'build_info.json').read_text(encoding='utf-8-sig'))
+    except Exception:
+        return {}
+
+
+def version_text() -> str:
+    b = build_info()
+    if not b.get('commit'):
+        return f'{VERSION} (из исходников)'
+    dirty = ', с незакоммиченными изменениями' if b.get('dirty') else ''
+    return f"{VERSION} (коммит {b['commit']}{dirty}, собрано {b.get('built', '?')})"
+
+
 def setup_logging() -> Path:
     logs = data_dir() / 'logs'
     logs.mkdir(exist_ok=True)
@@ -261,7 +278,7 @@ def open_with_browser(url: str, server: Server | None) -> None:
 # --------------------------------------------------------------------------- #
 def main(argv: list[str] | None = None) -> int:
     log_path = setup_logging()
-    log.info('%s %s, Python %s, frozen=%s', TITLE, VERSION, sys.version.split()[0],
+    log.info('%s %s, Python %s, frozen=%s', TITLE, version_text(), sys.version.split()[0],
              getattr(sys, 'frozen', False))
     url = running_instance()
     server = None

@@ -39,14 +39,27 @@ if ($LASTEXITCODE -ne 0) { throw "не удалось установить па�
 Step "иконки"
 & $Py desktop\make_icons.py
 
+Step "версия сборки"
+# Коммит, из которого собрано приложение: его показывает dxa-qc-cli version.
+# Незакоммиченные изменения кода — предупреждение и пометка в версии.
+$commit = (git rev-parse --short HEAD).Trim()
+$dirty = git status --porcelain -- bot desktop service region_clf spine_qc hip_roi hip_rotation cnn_qc src requirements.lock
+if ($dirty) { Write-Warning "есть незакоммиченные изменения кода: сборка будет помечена как изменённая" }
+New-Item -ItemType Directory -Force build | Out-Null
+$info = [ordered]@{ version = $Version; commit = $commit; dirty = [bool]$dirty; built = (Get-Date -Format "yyyy-MM-dd HH:mm") } | ConvertTo-Json
+[System.IO.File]::WriteAllText((Join-Path $Root "build\build_info.json"), $info, (New-Object System.Text.UTF8Encoding $false))
+Write-Host "коммит $commit"
+
 Step "PyInstaller"
 & $Py -m PyInstaller desktop\dxa_qc.spec --noconfirm --distpath dist --workpath build\pyinstaller
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller завершился с ошибкой" }
 $Cli = Join-Path $Root "dist\DXA-QC\dxa-qc-cli.exe"
 
 Step "проверка сборки"
-& $Cli version
+$ver = & $Cli version
 if ($LASTEXITCODE -ne 0) { throw "dxa-qc-cli не запускается" }
+Write-Host $ver
+if ($ver -notmatch [regex]::Escape($commit)) { throw "в сборке не тот коммит: $ver" }
 if (Test-Path "demo.zip") {
     $out = Join-Path $Root "build\smoke_report.csv"
     & $Cli batch demo.zip --out $out --quiet

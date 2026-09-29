@@ -27,6 +27,9 @@ datas = [
     (str(ROOT / 'hip_roi' / 'probability.json'), 'hip_roi'),
     (str(ROOT / 'desktop' / 'assets' / 'icon.ico'), 'desktop/assets'),
 ]
+# версия сборки: коммит и дата (пишет desktop/build_windows.ps1)
+if (ROOT / 'build' / 'build_info.json').exists():
+    datas.append((str(ROOT / 'build' / 'build_info.json'), 'desktop'))
 for crit in ('rotation', 'artifacts'):
     for f in sorted((ROOT / 'cnn_qc' / crit).glob('model_*.onnx')) + [ROOT / 'cnn_qc' / crit / 'meta.json']:
         datas.append((str(f), f'cnn_qc/{crit}'))

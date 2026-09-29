@@ -59,8 +59,8 @@ def main(argv: list[str] | None = None) -> int:
         from desktop.app import main as gui
         return gui(rest)
     if cmd in ('version', '--version'):
-        from desktop.app import VERSION
-        print(f'Контроль качества DXA {VERSION}')
+        from desktop.app import version_text
+        print(f'Контроль качества DXA {version_text()}')
         return 0
     # dxa-qc-cli <путь> — сокращение для batch
     from pathlib import Path
