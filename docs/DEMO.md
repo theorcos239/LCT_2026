@@ -6,7 +6,8 @@
 [presentation/DXA_QC_pitch.pdf](presentation/DXA_QC_pitch.pdf); доклад по
 слайдам с хронометражем и ответами на вопросы —
 [presentation/DXA_QC_speech.docx](presentation/DXA_QC_speech.docx).
-HTML-версия — `presentation/slides.html`, клавиша `F` — показ на весь экран.
+Презентация сделана по шаблону ЛЦТ 2026: обязательные слайды о команде в
+начале (данные — `presentation/team.json`), дальше — решение.
 
 ## Подготовка (за 10 минут до показа)
 
@@ -77,7 +78,7 @@ python docs/presentation/make_demo_zip.py         # demo.zip, 7 исследов
    работает без сети».
 
 Если показ вживую невозможен (нет Docker, проектор без сети) — те же шаги
-на слайдах «Кейсы» и «Интерфейс и интеграция».
+на слайдах «Кейсы» и «Интерфейсы».
 
 ## Вопросы, которые стоит ждать
 
@@ -117,7 +118,7 @@ GPU не нужен. Интеграция — DICOM-роутер в PACS и DICO
 
 Полный текст выступления по слайдам — в `presentation/DXA_QC_speech.docx`
 (там же миниатюры слайдов, хронометраж и ответы на вопросы) и в заметках
-докладчика `presentation/DXA_QC_pitch.pptx`. Регламент: 19 слайдов, около 9 минут,
+докладчика `presentation/DXA_QC_pitch.pptx`. Регламент: 26 слайдов, около 10 минут,
 затем демонстрация.
 
 Пересобрать презентацию после переобучения:
@@ -128,5 +129,5 @@ python -m service.evaluate --no-cnn --out runs/eval_geometry/metrics.json
 python -m service.evaluate --no-cnn --roi-rule margins --out runs/eval_baseline/metrics.json
 python -m service.benchmark                                  # service/benchmark.json
 python docs/presentation/make_demo_zip.py
-python docs/presentation/build.py --cases --screens demo.zip # HTML, PPTX, PDF, DOCX
+python docs/presentation/build.py --cases --screens demo.zip # PPTX по шаблону, PDF, DOCX
 ```

@@ -57,7 +57,8 @@ FMT=csv ./run.sh batch /путь/к/закрытому_набору  # то же
 | API | http://localhost:8000/docs — пакетная обработка `POST /batch`, один снимок `POST /analyze` |
 | настольное приложение | установщик [DXA-QC-Setup-1.0.0.exe](https://github.com/theorcos239/LCT_2026/raw/master/release/DXA-QC-Setup-1.0.0.exe) — [DESKTOP.md](DESKTOP.md) |
 | Telegram-бот | [@LCT_bone_density_research_bot](https://t.me/LCT_bone_density_research_bot) — отвечает, пока запущен у команды; только обезличенные данные — [TELEGRAM_BOT.md](TELEGRAM_BOT.md) |
-| презентация | [presentation/DXA_QC_pitch.pptx](presentation/DXA_QC_pitch.pptx), [PDF](presentation/DXA_QC_pitch.pdf), доклад [DXA_QC_speech.docx](presentation/DXA_QC_speech.docx), сценарий демонстрации [DEMO.md](DEMO.md) |
+| презентация | по шаблону ЛЦТ: [presentation/DXA_QC_pitch.pptx](presentation/DXA_QC_pitch.pptx), [PDF](presentation/DXA_QC_pitch.pdf), доклад [DXA_QC_speech.docx](presentation/DXA_QC_speech.docx), сценарий демонстрации [DEMO.md](DEMO.md) |
+| инструкции пользователя | [приложение](manuals/Инструкция_приложение.pdf) и [Telegram-бот](manuals/Инструкция_Telegram-бот.pdf) — со снимками экрана |
 
 ## Соответствие ТЗ
 
@@ -108,7 +109,7 @@ python -m service.evaluate            # метрики с ДИ, честная o
 |---|---|
 | как устроено, метрики, ограничения | [README](../README.md) |
 | данные, дубликаты, расхождения эталона с ТЗ | [DATASET.md](../DATASET.md) |
-| как читать отчёт, коды и флаги | [USER_GUIDE.md](USER_GUIDE.md) |
+| как читать отчёт, коды и флаги | [USER_GUIDE.md](USER_GUIDE.md); для врача — [инструкция к приложению](manuals/Инструкция_приложение.pdf) |
 | требования, запуск, безопасность, эксплуатация | [DEPLOYMENT.md](DEPLOYMENT.md) |
 | обучение, калибровка, перенос на другой аппарат | [TRAINING.md](TRAINING.md) |
 | сеть `cnn_qc` | [cnn_qc/README.md](../cnn_qc/README.md) |

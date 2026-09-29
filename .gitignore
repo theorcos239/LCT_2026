@@ -12,13 +12,14 @@ runs/**
 !runs/keypoints/fold*_history.csv
 !runs/keypoints/oof.npz
 !runs/keypoints/oof_points.csv
-# Метрики сравнения «точки против контура» (python -m service.evaluate
-# --keypoints-oof / --keypoints --out runs/eval_*/metrics.json) — на них
+# Метрики сравнения «точки против контура» на кадрах обученных фолдов 0–1
+# (python -m service.evaluate --folds 0 1 --no-cnn --roi-rule margins
+# [--keypoints-oof] --out runs/eval_oof[_contour]/metrics.json) — на них
 # опирается таблица в README.
 !runs/eval_oof/
 !runs/eval_oof/metrics.json
-!runs/eval_ens/
-!runs/eval_ens/metrics.json
+!runs/eval_oof_contour/
+!runs/eval_oof_contour/metrics.json
 # Базовая линия «только геометрия» (python -m service.evaluate --no-cnn) и её
 # скорость — с ними сравнивается сервис с нейросетью в README и презентации.
 !runs/eval_geometry/
@@ -28,15 +29,14 @@ runs/**
 !runs/eval_baseline/
 !runs/eval_baseline/metrics.json
 
-# Презентация: PNG слайдов — промежуточный рендер (HTML-скриншоты и экспорт
-# PowerPoint для миниатюр в докладе .docx)
-docs/presentation/assets/slides/
+# Презентация: PNG слайдов — экспорт PowerPoint для миниатюр в докладе .docx
 docs/presentation/assets/pptx_png/
+# Полный шаблон организаторов (34 МБ) — в репозитории его облегчённая копия
+# docs/presentation/template/LCT2026_template.pptx
+/ЛЦТ2026 Шаблон презентации.pptx
 
 # Демо-архив (python docs/presentation/make_demo_zip.py)
 /demo.zip
-# Вариант HTML для публикации как Artifact (без обёртки html/head) — генерируется
-docs/presentation/slides.artifact.html
 
 # Секреты: токен Telegram-бота и прочие локальные настройки (шаблон — .env.example)
 .env

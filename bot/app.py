@@ -220,7 +220,17 @@ def _criterion_texts(row: dict) -> list[tuple[str, str]]:
     from service.pipeline import VIOLATIONS
     out = []
     for code in [c for c in str(row.get('violation_type') or '').split(';') if c]:
-        out.append((CRITERION_SHORT.get(code, code), where.get(code) or VIOLATIONS.get(code, code)))
+        name = CRITERION_SHORT.get(code, code)
+        t = str(where.get(code) or VIOLATIONS.get(code, code)).strip()
+        # Тексты критериев бывают с собственным префиксом («ротация: …») или уже
+        # начинаются с названия («ось позвоночника отклонена…») — без повторов.
+        stem = name.split()[0][:6].lower()                   # «посторонн», «ротаци», «ось»…
+        head, sep, rest = t.partition(': ')
+        if sep and len(head) < 30 and head.split()[0][:6].lower() == stem:
+            t = rest
+        if t.lower().startswith(stem):
+            name = ''
+        out.append((name, t))
     return out
 
 
@@ -241,7 +251,7 @@ def frame_caption(i: int, row: dict, limit: int = 1000) -> str:
     head = f'<b>{i}. {_esc(region)}</b>'
     if bad:
         head += ' — нарушение'
-        lines = [head] + [f'• {_esc(c)}: {_esc(t)}' for c, t in _criterion_texts(row)]
+        lines = [head] + [f'• {_esc(c)}: {_esc(t)}' if c else f'• {_esc(t)}' for c, t in _criterion_texts(row)]
     else:
         head += ' — качественное'
         lines = [head + (f' (вероятность нарушения {float(p):.0%})' if p not in (None, '') else '')]

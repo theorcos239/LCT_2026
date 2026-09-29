@@ -27,11 +27,13 @@ sys.path.insert(0, str(HERE.parents[1]))
 import build  # noqa: E402
 import speech  # noqa: E402
 
-INK = RGBColor(0x11, 0x1C, 0x24)
-INK2 = RGBColor(0x44, 0x54, 0x5F)
-INK3 = RGBColor(0x7A, 0x89, 0x95)
-ACCENT = RGBColor(0x1B, 0x5F, 0xD0)
-FONT, MONO = 'Segoe UI', 'Consolas'
+# цвета и шрифт шаблона ЛЦТ 2026 — как в презентации
+INK = RGBColor(0x1C, 0x1D, 0x22)
+INK2 = RGBColor(0x4A, 0x44, 0x58)
+INK3 = RGBColor(0x8B, 0x85, 0x99)
+ACCENT = RGBColor(0xFF, 0x00, 0x53)
+PURPLE = RGBColor(0x52, 0x09, 0x77)
+FONT, MONO = 'Montserrat', 'Consolas'
 PNG = HERE / 'assets' / 'pptx_png'
 
 
@@ -67,7 +69,7 @@ def para(doc, text='', size=11, color=INK, bold=False, name=FONT, after=6, befor
     return p
 
 
-def rule(doc, color='D3DBE0', size=6):
+def rule(doc, color='C9C3DA', size=6):
     p = doc.add_paragraph()
     p.paragraph_format.space_after = Pt(6)
     pPr = p._p.get_or_add_pPr()
@@ -79,6 +81,21 @@ def rule(doc, color='D3DBE0', size=6):
     bottom.set(qn('w:color'), color)
     pbdr.append(bottom)
     pPr.append(pbdr)
+
+
+def thumb(png: Path):
+    """Миниатюра слайда в JPEG 1400 px: фоны шаблона в PNG весят мегабайты,
+    а на странице A4 шириной 17 см разницы не видно."""
+    import io
+
+    from PIL import Image
+    buf = io.BytesIO()
+    with Image.open(png) as im:
+        im = im.convert('RGB')
+        im.thumbnail((1400, 1400))
+        im.save(buf, format='JPEG', quality=86, optimize=True)
+    buf.seek(0)
+    return buf
 
 
 def seconds(t: str) -> int:
@@ -106,8 +123,8 @@ def main() -> int:
     _font(fp.add_run('Контроль качества DXA · доклад к презентации · ЛЦТ 2026'), MONO, 8, INK3)
 
     # титул
-    para(doc, 'ЛЦТ 2026 · КЕЙС ДЕПАРТАМЕНТА ЗДРАВООХРАНЕНИЯ МОСКВЫ', 9, ACCENT, name=MONO, before=60, after=10)
-    para(doc, 'Контроль качества DXA', 30, INK, bold=True, after=4, line=1.0)
+    para(doc, 'ЛЦТ 2026 · КЕЙС ДЕПАРТАМЕНТА ЗДРАВООХРАНЕНИЯ МОСКВЫ', 9, ACCENT, bold=True, before=60, after=10)
+    para(doc, 'Контроль качества DXA', 30, PURPLE, bold=True, after=4, line=1.0)
     para(doc, 'Доклад к презентации по слайдам', 16, INK2, after=18)
     para(doc, 'Сервис проверяет укладку и разметку денситометрии до того, как исследование уйдёт к врачу, '
               'и объясняет каждое замечание в миллиметрах и градусах.', 12, INK2, after=18, line=1.35)
@@ -137,12 +154,12 @@ def main() -> int:
         p = para(doc, after=2)
         _font(p.add_run(f'СЛАЙД {i:02d}   '), MONO, 9, INK3)
         _font(p.add_run(sl['time']), MONO, 9, ACCENT)
-        para(doc, sl['title'], 18, INK, bold=True, after=8, line=1.05)
+        para(doc, sl['title'], 18, PURPLE, bold=True, after=8, line=1.05)
         img = PNG / f'{i:02d}.png'
         if img.exists():
             pic = doc.add_paragraph()
             pic.paragraph_format.space_after = Pt(10)
-            pic.add_run().add_picture(str(img), width=Cm(17))
+            pic.add_run().add_picture(thumb(img), width=Cm(17))
         para(doc, 'ТЕКСТ ВЫСТУПЛЕНИЯ', 8.5, ACCENT, name=MONO, after=4)
         for t_ in sl['text']:
             para(doc, t_, 11.5, INK, after=8, line=1.4)
@@ -158,7 +175,7 @@ def main() -> int:
     # вопросы
     doc.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
     para(doc, 'ПОСЛЕ ДЕМОНСТРАЦИИ', 9, ACCENT, name=MONO, after=2)
-    para(doc, 'Ожидаемые вопросы и ответы', 18, INK, bold=True, after=12)
+    para(doc, 'Ожидаемые вопросы и ответы', 18, PURPLE, bold=True, after=12)
     for q, a in speech.QA:
         para(doc, q, 12, INK, bold=True, after=3, before=6)
         para(doc, a, 11, INK2, after=8, line=1.35)
