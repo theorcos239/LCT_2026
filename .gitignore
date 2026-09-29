@@ -45,3 +45,7 @@ docs/presentation/slides.artifact.html
 # Сборка настольного приложения и установщика (desktop/build_windows.ps1)
 /build/
 /dist/
+
+# Файлы блокировки LibreOffice/Office
+.~lock.*#
+~$*
