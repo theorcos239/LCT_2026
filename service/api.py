@@ -58,8 +58,12 @@ from .report import summary, write_details, write_overlays, write_sr, write_tabl
 
 VERSION = '1.0.0'
 
+# Встроенные страницы /docs и /redoc FastAPI подгружают Swagger UI и ReDoc с
+# CDN — единственное место, откуда интерфейс мог бы пойти в интернет. Поэтому
+# они выключены, а /docs собирается ниже из копии Swagger UI в static/swagger.
 app = FastAPI(title='DXA Quality Control', version=VERSION,
-              description='Сервис оценки качества денситометрических исследований')
+              description='Сервис оценки качества денситометрических исследований',
+              docs_url=None, redoc_url=None)
 
 _analyzer: Analyzer | None = None
 _lock = threading.Lock()
@@ -430,3 +434,16 @@ if STATIC.exists():
     @app.get('/favicon.ico', include_in_schema=False)
     def favicon() -> FileResponse:
         return FileResponse(STATIC / 'icons' / 'favicon-32.png', media_type='image/png')
+
+    # Описание API (Swagger UI) — из локальной копии static/swagger, без CDN:
+    # приложение и контейнер не обращаются в интернет ни одной страницей.
+    if (STATIC / 'swagger' / 'swagger-ui-bundle.js').exists():
+        from fastapi.openapi.docs import get_swagger_ui_html
+
+        @app.get('/docs', include_in_schema=False)
+        def api_docs() -> HTMLResponse:
+            return get_swagger_ui_html(openapi_url=app.openapi_url or '/openapi.json',
+                                       title=f'{app.title} — API',
+                                       swagger_js_url='/static/swagger/swagger-ui-bundle.js',
+                                       swagger_css_url='/static/swagger/swagger-ui.css',
+                                       swagger_favicon_url='/static/icons/favicon-32.png')

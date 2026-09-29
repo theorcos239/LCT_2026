@@ -62,7 +62,7 @@ def load() -> dict:
     # исходное решение до доработок под эксперта: без сети, ROI по рисунку 6 ТЗ
     D['hb'] = jload(ROOT / 'runs' / 'eval_baseline' / 'metrics.json').get('honest_oof', {}) or D['hg']
     D['h0'] = D['hg'].get('per_violation', {})
-    D['tests'] = 64
+    D['tests'] = 65
     D['tests_bot'] = 27
     D['cnn'] = {c: jload(ROOT / 'cnn_qc' / c / 'meta.json') for c in ('rotation', 'artifacts')}
     D['bench'] = jload(ROOT / 'service' / 'benchmark.json')

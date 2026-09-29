@@ -230,6 +230,12 @@ def test_api() -> None:
           m.status_code == 200 and m.json().get('display') == 'standalone'
           and sw.status_code == 200 and 'javascript' in sw.headers.get('content-type', '')
           and icons and all(s == 200 for s in icons) and 'rel="manifest"' in page.text)
+    d = c.get('/docs')
+    check('описание API (/docs) отдаётся из локальной копии Swagger UI, без CDN',
+          d.status_code == 200 and '/static/swagger/swagger-ui-bundle.js' in d.text
+          and 'cdn.jsdelivr.net' not in d.text and 'googleapis' not in d.text
+          and c.get('/static/swagger/swagger-ui-bundle.js').status_code == 200
+          and c.get('/redoc').status_code == 404)
 
 
 def test_keypoints() -> None:

@@ -513,7 +513,7 @@ class Bot:
         ahead = self.tasks.qsize()
         self.tasks.put(task)
         if ahead:
-            self.api.send_message(task.chat_id, f'Принято, в очереди передо мной {ahead}.',
+            self.api.send_message(task.chat_id, f'Принято. Перед вами в очереди: {ahead}.',
                                   reply_to=task.reply_to)
 
     # ---------------------------------------------------------------- worker

@@ -32,6 +32,10 @@ class Session:
 
     def __init__(self, path: str | Path):
         import onnxruntime as ort
+        try:
+            ort.disable_telemetry_events()      # сервис локальный: наружу ничего не уходит
+        except Exception:                       # noqa: BLE001 — старые сборки без этой функции
+            pass
         so = ort.SessionOptions()
         so.intra_op_num_threads = 1
         so.inter_op_num_threads = 1
