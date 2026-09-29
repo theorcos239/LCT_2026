@@ -24,6 +24,10 @@ STUDIES = HERE.parent / 'НД_для_обучения' / 'Исследовани
 
 
 def main() -> int:
+    if not STUDIES.exists():
+        # набор организаторов в репозиторий не входит: в нём снимки
+        print(f'обучающий набор не найден: {STUDIES} — проверка пропущена')
+        return 0
     lab = pd.read_csv(HERE / 'labels.csv')
     truth = dict(zip(lab.px_hash, lab.label))
     clf = RegionClassifier()

@@ -26,6 +26,28 @@ DATA = ROOT / 'НД_для_обучения' / 'Исследования'
 PASS, FAIL = [], []
 
 
+def synthetic_dicom(path: Path) -> Path:
+    """DICOM со случайными пикселями: обучающий набор в репозиторий не входит
+    (в нём снимки), а проверки формата и API должны идти и без него."""
+    from pydicom.dataset import FileDataset, FileMetaDataset
+    from pydicom.uid import ExplicitVRLittleEndian, generate_uid
+    meta = FileMetaDataset()
+    meta.MediaStorageSOPClassUID = '1.2.840.10008.5.1.4.1.1.1'
+    meta.MediaStorageSOPInstanceUID = generate_uid()
+    meta.TransferSyntaxUID = ExplicitVRLittleEndian
+    ds = FileDataset(str(path), {}, file_meta=meta, preamble=b'\0' * 128)
+    ds.SOPClassUID, ds.SOPInstanceUID = meta.MediaStorageSOPClassUID, meta.MediaStorageSOPInstanceUID
+    ds.StudyInstanceUID, ds.SeriesInstanceUID = generate_uid(), generate_uid()
+    ds.Modality, ds.PatientID = 'OT', 'TEST'
+    px = (np.random.default_rng(0).random((200, 160)) * 255).astype('uint8')
+    ds.Rows, ds.Columns = px.shape
+    ds.SamplesPerPixel, ds.PhotometricInterpretation = 1, 'MONOCHROME2'
+    ds.BitsAllocated, ds.BitsStored, ds.HighBit, ds.PixelRepresentation = 8, 8, 7, 0
+    ds.PixelData = px.tobytes()
+    ds.save_as(str(path), enforce_file_format=True)
+    return path
+
+
 def check(name: str, ok: bool, detail: str = '') -> None:
     (PASS if ok else FAIL).append(name)
     print(f'  [{"ok" if ok else "ПРОВАЛ"}] {name}{" — " + detail if detail else ""}')
@@ -209,8 +231,16 @@ def test_api() -> None:
     c = TestClient(app)
     check('GET /health', c.get('/health').status_code == 200)
     check('GET /taxonomy', 'violations' in c.get('/taxonomy').json())
-    dcm = next(sorted(DATA.iterdir())[0].rglob('*.dcm'))
-    r = c.post('/analyze', files={'file': (dcm.name, dcm.read_bytes(), 'application/dicom')})
+    if DATA.exists():
+        dcm = next(sorted(DATA.iterdir())[0].rglob('*.dcm'))
+        name, payload = dcm.name, dcm.read_bytes()
+    else:                                   # без обучающего набора — синтетический снимок
+        tmp = Path(tempfile.mkdtemp(prefix='dxa_qc_test_'))
+        try:
+            name, payload = 'synthetic.dcm', synthetic_dicom(tmp / 'synthetic.dcm').read_bytes()
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+    r = c.post('/analyze', files={'file': (name, payload, 'application/dicom')})
     j = r.json()
     need = {'anatomical_region', 'quality_class', 'violation_type',
             'processing_status', 'time_of_processing'}
