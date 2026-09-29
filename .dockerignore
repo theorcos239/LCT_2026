@@ -31,3 +31,14 @@ __pycache__/
 *.pdf
 *.md
 !README.md
+
+# Секреты (токен Telegram-бота) в контекст сборки не уходят никогда
+.env
+*.env
+
+# Сборка настольного приложения: окружение Python, PyInstaller, установщик —
+# гигабайты, образу не нужны
+build/
+dist/
+desktop/
+demo.zip

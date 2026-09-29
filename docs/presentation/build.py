@@ -62,7 +62,8 @@ def load() -> dict:
     # исходное решение до доработок под эксперта: без сети, ROI по рисунку 6 ТЗ
     D['hb'] = jload(ROOT / 'runs' / 'eval_baseline' / 'metrics.json').get('honest_oof', {}) or D['hg']
     D['h0'] = D['hg'].get('per_violation', {})
-    D['tests'] = 63
+    D['tests'] = 64
+    D['tests_bot'] = 27
     D['cnn'] = {c: jload(ROOT / 'cnn_qc' / c / 'meta.json') for c in ('rotation', 'artifacts')}
     D['bench'] = jload(ROOT / 'service' / 'benchmark.json')
     D['bench_geo'] = jload(ROOT / 'runs' / 'benchmark_geometry.json')
@@ -956,14 +957,14 @@ out-of-fold. Все решения о правилах принимались п
 <div class="content cols-8-4" style="gap: 36px;">
   {ui_img}
   <div class="stack">
-    <div class="card"><div class="k">веб-интерфейс</div><div class="small">Перетащить папку или zip, листать снимки с
-      разметкой, нормой и близостью к границе. Фильтры по типу нарушения, клавиатура.</div></div>
+    <div class="card"><div class="k">веб-приложение</div><div class="small">Перетащить папку или zip, листать снимки с
+      разметкой, нормой и близостью к границе. Ставится из браузера как приложение.</div></div>
     <div class="card"><div class="k">человек в контуре</div><div class="small">Оператор отмечает «согласен / не согласен»
       с комментарием; отметки выгружаются в CSV — это данные для перекалибровки порогов.</div></div>
     <div class="card"><div class="k">PACS</div><div class="small">DICOM SR (Basic Text SR) в том же исследовании:
       заключение по-русски рядом со снимком, <code>VerificationFlag = UNVERIFIED</code>.</div></div>
-    <div class="card"><div class="k">API</div><div class="small"><code>POST /batch</code> → задание →
-      <code>/jobs/{{id}}/report</code>, <code>/overlays</code>, <code>/sr</code>; документация на <code>/docs</code>.</div></div>
+    <div class="card"><div class="k">без Docker</div><div class="small">Установщик для Windows и Telegram-бот:
+      тот же конвейер, отчёт побитово тот же. API — <code>POST /batch</code>, документация на <code>/docs</code>.</div></div>
   </div>
 </div>'''
     dk.add('Интерфейс и интеграция', body, '''Всё, что выдаёт конвейер, видно в веб-интерфейсе на том же
@@ -1048,19 +1049,19 @@ out-of-fold. Все решения о правилах принимались п
     <li>Пакетный режим: <code>./run.sh batch /data</code> → <code>out/report.xlsx</code>.</li>
   </ol>
   <div class="stack">
-    <div class="card"><div class="k">запасной вариант</div><div class="body">Если демонстрация вживую невозможна — те же шаги
-      на снимках экрана в этой презентации и в <code>docs/DEMO.md</code>.</div></div>
+    <div class="card"><div class="k">запасной вариант</div><div class="body">Нет Docker — настольное приложение;
+      нет сети — снимки экрана в этой презентации; с телефона — бот, команда <code>/demo</code>.</div></div>
     <div class="card"><div class="k">репозиторий</div><div class="body mono" style="font-size: 20px;">github.com/theorcos239/LCT_2026</div>
-      <div class="small">README · docs/USER_GUIDE · DEPLOYMENT · TRAINING · DEMO</div></div>
+      <div class="small">README · docs/REVIEW · USER_GUIDE · DESKTOP · TELEGRAM_BOT</div></div>
   </div>
 </div>
 <div class="strip">
   <div><b>Контейнер</b>Docker, веса в образе, build.sh и run.sh на POSIX sh</div>
   <div><b>Отчёт ТЗ 2.5</b>xlsx или csv, 8 колонок, вероятности и флаги</div>
   <div><b>ТЗ 2.6</b>оверлеи с тепловой картой, DICOM SR, веб-интерфейс</div>
-  <div><b>API</b>пакет заданием, отчёт, оверлеи, SR; документация /docs</div>
+  <div><b>Интерфейсы</b>веб-приложение, установщик для Windows, Telegram-бот, API</div>
   <div><b>Документация</b>README, руководства пользователя, развёртывания, обучения</div>
-  <div><b>62 автотеста</b>формат, устойчивость, детерминизм, сеть, ориентация, SR</div>
+  <div><b>Автотесты</b>сервис — 64, бот — 27: формат, устойчивость, детерминизм, сеть, SR</div>
 </div>'''
     dk.add('Демонстрация', body, '''Демонстрация занимает три минуты: поднимаем контейнер, загружаем
 архив из семи исследований, проходим по одному снимку каждого типа нарушения, отмечаем

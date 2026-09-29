@@ -37,3 +37,11 @@ docs/presentation/assets/pptx_png/
 /demo.zip
 # Вариант HTML для публикации как Artifact (без обёртки html/head) — генерируется
 docs/presentation/slides.artifact.html
+
+# Секреты: токен Telegram-бота и прочие локальные настройки (шаблон — .env.example)
+.env
+*.env
+!.env.example
+# Сборка настольного приложения и установщика (desktop/build_windows.ps1)
+/build/
+/dist/

@@ -13,15 +13,25 @@
 ./run.sh                                     # веб-интерфейс и API на localhost:8000
 ```
 
-Веб-интерфейс — `http://localhost:8000/`: перетащить папку или zip, листать
-кадры со снимком, измерениями и нормами, отмечать согласие с вердиктом.
-Описание — [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
+**Проверяющим** — [docs/REVIEW.md](docs/REVIEW.md): отчёт на закрытом наборе
+за пять минут и таблица «пункт ТЗ → где закрыт → как проверить».
 
-Без контейнера:
+Один и тот же конвейер доступен через четыре интерфейса — отчёты у них
+совпадают побитово:
+
+| интерфейс | для чего | как открыть |
+|---|---|---|
+| **контейнер** | пакетная обработка, API, веб-интерфейс на сервере | `./build.sh`, `./run.sh` — ниже в этом README |
+| **веб-приложение** | загрузка папки или zip, снимки с разметкой, отметки специалиста, выгрузки; устанавливается из браузера как приложение | `http://localhost:8000/` — [USER_GUIDE.md](docs/USER_GUIDE.md) |
+| **настольное приложение для Windows** | то же без Docker: установщик, окно, пакетная обработка из консоли | `DXA-QC-Setup-1.0.0.exe` — [DESKTOP.md](docs/DESKTOP.md) |
+| **Telegram-бот** | показать сервис с телефона; только обезличенные данные | [@LCT_bone_density_research_bot](https://t.me/LCT_bone_density_research_bot) — [TELEGRAM_BOT.md](docs/TELEGRAM_BOT.md) |
+
+Без контейнера и установщика, на любой ОС с Python 3.11:
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements.lock
 python -m service.cli НД_для_обучения/Исследования --out report.xlsx
+python -m desktop                            # окно приложения
 ```
 
 Руководства (ТЗ 5): [пользователя](docs/USER_GUIDE.md) — как читать отчёт,
@@ -352,6 +362,9 @@ out-of-fold вероятностях сети; честная оценка вл�
 | [`DATASET.md`](DATASET.md) | разбор данных: дубликаты, теги, масштаб, метки |
 | [`docs/`](docs/) | руководства пользователя, по развёртыванию и обучению; [демо-сценарий](docs/DEMO.md) |
 | [`docs/presentation/`](docs/presentation/) | презентация (PPTX с заметками, PDF, HTML), доклад по слайдам (DOCX) и их сборщик из метрик репозитория |
+| [`desktop/`](desktop/) | настольное приложение для Windows: окно (WebView2), консольные команды, сборка PyInstaller и установщик Inno Setup — [docs/DESKTOP.md](docs/DESKTOP.md) |
+| [`bot/`](bot/) | Telegram-бот на стандартной библиотеке Python — [docs/TELEGRAM_BOT.md](docs/TELEGRAM_BOT.md) |
+| `.env.example` | шаблон локальных настроек: токен бота и т.п. (сам `.env` в git не попадает) |
 | `Dockerfile.keypoints` | необязательный образ с моделью ключевых точек (torch CPU) |
 | [`TODO.md`](TODO.md) | ТЗ модели ключевых точек |
 | [`src/dxa_qc/`](src/dxa_qc/) | модель ключевых точек: данные, обучение, инференс |
@@ -450,6 +463,8 @@ GET  /jobs/{id}/details      все измерения в JSON
 GET  /jobs/{id}/overlays     zip с визуализацией
 GET  /jobs/{id}/sr           zip с DICOM SR
 GET  /jobs/{id}/overlays/{uid}.png   визуализация одного кадра (для интерфейса)
+GET  /manifest.webmanifest, /sw.js   веб-приложение: установка из браузера,
+                             страница «сервис не запущен»
 ```
 
 Интерактивная документация — `/docs`.
@@ -860,6 +875,12 @@ out-of-fold с out-of-fold, по оси F1 у контура 0.25 (порог п
 
 ```bash
 python -m service.test_service        # формат, устойчивость, дедупликация, детерминизм, API, сеть
+python -m bot.test_bot                # Telegram-бот без сети: команды, файлы, альбомы, кнопки, доступ
 python -m region_clf.test_region_clf  # 499 файлов + симметрия lh/rh
 python -m hip_roi.test_hip_roi        # фантом + реальные кадры
 ```
+
+Тестам нужен обучающий набор рядом с кодом (`НД_для_обучения/`, в git не
+хранится). Сверка интерфейсов между собой: контейнер, установленное
+приложение и локальный Python на всех 252 снимках дают одинаковые
+вердикты, флаги и вероятности.

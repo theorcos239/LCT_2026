@@ -415,3 +415,18 @@ if STATIC.exists():
     @app.get('/', response_class=HTMLResponse, include_in_schema=False)
     def index() -> HTMLResponse:
         return HTMLResponse((STATIC / 'index.html').read_text(encoding='utf-8'))
+
+    # Веб-приложение (PWA): манифест и сервис-воркер отдаются с корня — только
+    # так область действия воркера покрывает весь интерфейс.
+    @app.get('/manifest.webmanifest', include_in_schema=False)
+    def manifest() -> FileResponse:
+        return FileResponse(STATIC / 'manifest.webmanifest', media_type='application/manifest+json')
+
+    @app.get('/sw.js', include_in_schema=False)
+    def service_worker() -> FileResponse:
+        return FileResponse(STATIC / 'sw.js', media_type='text/javascript',
+                            headers={'Cache-Control': 'no-cache'})
+
+    @app.get('/favicon.ico', include_in_schema=False)
+    def favicon() -> FileResponse:
+        return FileResponse(STATIC / 'icons' / 'favicon-32.png', media_type='image/png')

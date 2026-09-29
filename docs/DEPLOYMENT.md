@@ -108,6 +108,10 @@ docker run --rm --user "$(id -u):$(id -g)" \
 | `DXA_QC_ROI_RULE` | контейнер/процесс API | `scan_length` | правило вердикта `hip_roi`: `scan_length` — по длине поля, как эксперт; `margins` — строго по рисунку 6 ТЗ. У CLI то же — `--roi-rule` |
 | `DXA_QC_KEYPOINTS` | контейнер/процесс API | выключено | `1` — включить модель ключевых точек (нужны torch и веса, см. ниже) |
 | `DXA_QC_JOB_TTL_HOURS` | контейнер/процесс API | 24 | сколько часов хранить результаты завершённых заданий `/batch` |
+| `ROI_RULE` | run.sh | `scan_length` | то же, что `DXA_QC_ROI_RULE`, для `./run.sh` и `./run.sh batch` |
+| `DXA_QC_TG_TOKEN` | бот | — | токен Telegram-бота; хранится в `.env` (в git не попадает) |
+| `DXA_QC_TG_ALLOWED` | бот | пусто — всем | id или `@username` через запятую, кому можно пользоваться ботом |
+| `DXA_QC_DEMO` | бот | `demo.zip` в корне | архив для команды `/demo` |
 | `OMP_NUM_THREADS` и др. | Dockerfile | 1 | один поток BLAS (и onnxruntime — в коде) — условие воспроизводимости, не менять |
 
 ## Безопасность и данные
@@ -124,6 +128,11 @@ docker run --rm --user "$(id -u):$(id -g)" \
 - Аутентификации в API нет: сервис рассчитан на закрытый контур. Для доступа
   из сети его нужно закрыть reverse-proxy с авторизацией (nginx, Traefik) и
   TLS.
+- **Telegram-бот — исключение из «без сети»**, поэтому он необязательный и по
+  умолчанию не запускается: файлы, отправленные боту, проходят через серверы
+  Telegram. Только для демонстрации и обезличенных данных. Токен — в `.env`
+  (в `.gitignore` и `.dockerignore`) или в переменной окружения; в журналы и
+  тексты ошибок он не попадает. Доступ сужается `DXA_QC_TG_ALLOWED`.
 
 ## Эксплуатация
 
@@ -138,6 +147,29 @@ docker run --rm --user "$(id -u):$(id -g)" \
   балансировщиком или несколько `run.sh batch` на разных подмножествах
   исследований. Один процесс держит один поток намеренно (воспроизводимость).
 - **Логи** — stdout контейнера (`docker logs dxa-qc`).
+
+## Другие варианты запуска
+
+**Настольное приложение для Windows** — без Docker, установщик без прав
+администратора, окно WebView2 и консоль `dxa-qc-cli` (batch, serve, bot):
+[DESKTOP.md](DESKTOP.md). Сборка установщика —
+`desktop\build_windows.ps1`.
+
+**Веб-сервер для локальной сети без Docker**: `dxa-qc-cli serve` (или
+`python -m desktop serve`) — интерфейс и API на порту 8000 для всех в сети.
+Как и у контейнера, аутентификации нет: только закрытый контур.
+
+**Telegram-бот** — на любом компьютере с интернетом, белый IP не нужен
+(long polling):
+
+```bash
+./run.sh bot                                         # в контейнере, токен из .env
+docker run -d --restart unless-stopped --name dxa-qc-bot \
+       --env-file .env dxa-qc:1.0.0 python -m bot    # постоянно
+python -m bot                                        # из репозитория
+```
+
+Подробно — [TELEGRAM_BOT.md](TELEGRAM_BOT.md).
 
 ## Модель ключевых точек (необязательно)
 
@@ -172,6 +204,7 @@ curl -s -F file=@снимок.dcm localhost:8000/analyze
 
 ```bash
 python -m service.test_service            # формат, устойчивость, API, SR, детерминизм, сеть
+python -m bot.test_bot                    # Telegram-бот без сети
 python -m region_clf.test_region_clf
 python -m hip_roi.test_hip_roi
 ```
@@ -179,6 +212,10 @@ python -m hip_roi.test_hip_roi
 ## Удаление
 
 ```bash
-docker rm -f dxa-qc
+docker rm -f dxa-qc dxa-qc-bot
 docker rmi dxa-qc:1.0.0 dxa-qc:latest
 ```
+
+Настольное приложение удаляется как обычная программа Windows
+(«Параметры» → «Приложения»); вместе с ним удаляются журналы, кэш окна и
+сохранённый токен бота.

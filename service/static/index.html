@@ -3,7 +3,11 @@
 <meta charset="utf-8">
 <title>Контроль качества DXA</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect x='5' y='1' width='6' height='14' rx='2' fill='%234493f8'/></svg>">
+<link rel="icon" href="/static/icons/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0f1216">
+<meta name="description" content="Проверка укладки и разметки денситометрических исследований (DXA)">
 <style>
   :root {
     --bg: #0f1216; --panel: #171b22; --panel2: #1e232c; --line: #2a303b; --text: #e6e9ef;
@@ -912,5 +916,11 @@ document.addEventListener('keydown', e => {
 function refreshLb() { if (!$('#lightbox').hidden) setTimeout(openLightbox, 150); }
 
 boot();
+
+// Веб-приложение: браузер предложит «Установить», а при остановленном сервисе
+// покажет понятную страницу. Сервис-воркер работает только на localhost и HTTPS.
+if ('serviceWorker' in navigator && window.isSecureContext) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+}
 </script>
 </html>

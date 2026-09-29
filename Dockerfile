@@ -53,6 +53,8 @@ COPY --chown=dxa:dxa spine_qc/ spine_qc/
 COPY --chown=dxa:dxa cnn_qc/ cnn_qc/
 COPY --chown=dxa:dxa service/ service/
 COPY --chown=dxa:dxa stats.py trainset.py folds.csv ./
+# Telegram-бот (десятки КБ, только стандартная библиотека): ./run.sh bot
+COPY --chown=dxa:dxa bot/ bot/
 
 # Код модели ключевых точек (десятки КБ) — без него флаг --keypoints не
 # заработал бы даже при смонтированных весах и torch. torch и веса

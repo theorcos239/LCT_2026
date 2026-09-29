@@ -1,0 +1,16 @@
+{
+  "name": "Контроль качества DXA",
+  "short_name": "DXA QC",
+  "description": "Проверка укладки и разметки денситометрических исследований: позвоночник и бедро, пять критериев ТЗ, отчёт и DICOM SR.",
+  "lang": "ru",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0f1216",
+  "theme_color": "#0f1216",
+  "icons": [
+    {"src": "/static/icons/icon-192.png", "sizes": "192x192", "type": "image/png"},
+    {"src": "/static/icons/icon-512.png", "sizes": "512x512", "type": "image/png"},
+    {"src": "/static/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+  ]
+}

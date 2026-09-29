@@ -223,6 +223,13 @@ def test_api() -> None:
     v = c.get('/version').json()
     check('GET /version отдаёт пороги для интерфейса',
           {'roi_margins_mm', 'axis_limit_deg_tz', 'rotation_corridor_mm2', 'spine_thresholds'} <= set(v))
+    m = c.get('/manifest.webmanifest')
+    sw = c.get('/sw.js')
+    icons = [c.get(i['src']).status_code for i in m.json().get('icons', [])] if m.status_code == 200 else []
+    check('веб-приложение: манифест, сервис-воркер, иконки',
+          m.status_code == 200 and m.json().get('display') == 'standalone'
+          and sw.status_code == 200 and 'javascript' in sw.headers.get('content-type', '')
+          and icons and all(s == 200 for s in icons) and 'rel="manifest"' in page.text)
 
 
 def test_keypoints() -> None:

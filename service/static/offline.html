@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="utf-8">
+<title>Контроль качества DXA — сервис не запущен</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="/static/icons/favicon-32.png">
+<style>
+  html, body { height: 100%; margin: 0; }
+  body { background: #0f1216; color: #e6e9ef; font: 15px/1.6 -apple-system, "Segoe UI", Roboto, sans-serif;
+         display: grid; place-items: center; padding: 0 16px; }
+  main { max-width: 34rem; }
+  img { width: 56px; height: 56px; border-radius: 12px; }
+  h1 { font-size: 22px; margin: 16px 0 8px; text-wrap: balance; }
+  p { color: #8b93a3; margin: 0 0 12px; }
+  code { background: #1e232c; border: 1px solid #2a303b; border-radius: 4px; padding: 1px 6px; color: #e6e9ef; }
+  button { margin-top: 8px; background: #4493f8; color: #fff; border: 0; border-radius: 6px;
+           padding: 8px 16px; font: inherit; cursor: pointer; }
+  button:focus-visible { outline: 2px solid #e6e9ef; outline-offset: 2px; }
+</style>
+<main>
+  <img src="/static/icons/icon-192.png" alt="">
+  <h1>Сервис контроля качества не запущен</h1>
+  <p>Интерфейс работает с сервисом на этом компьютере или в вашей сети. Запустите его одним из способов:</p>
+  <p>• приложение «Контроль качества DXA» из меню «Пуск»;<br>
+     • <code>./run.sh</code> — контейнер Docker;<br>
+     • <code>dxa-qc-cli serve</code> — сервер для локальной сети.</p>
+  <button onclick="location.reload()">Проверить ещё раз</button>
+</main>
+</html>
