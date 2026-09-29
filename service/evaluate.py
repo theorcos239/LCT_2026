@@ -83,7 +83,7 @@ def _risk_score(vtype: str, details: dict) -> float:
 
 def run(hip_method: str = 'kit2', keypoints: bool = False,
         keypoints_oof: bool = False, cnn: bool = True,
-        roi_rule: str = 'scan_length') -> pd.DataFrame:
+        roi_rule: str = 'scan_length', folds: list[int] | None = None) -> pd.DataFrame:
     """Прогон конвейера по всем уникальным кадрам обучающего набора.
 
     keypoints=True считает ось позвоночника и отступы ROI моделью ключевых
@@ -99,11 +99,17 @@ def run(hip_method: str = 'kit2', keypoints: bool = False,
     сети — out-of-fold (cnn_qc/<критерий>/oof.csv): поставляемая модель обучена
     на всех этих кадрах, и её оценка на них ничего бы не значила. cnn=False —
     одна геометрия, базовая линия до сети.
+
+    folds — только кадры этих фолдов (folds.csv). Нужно, когда модель точек
+    обучена не на всех фолдах: OOF-оценка возможна лишь на кадрах тех фолдов,
+    у которых есть свои веса, и сравнивать с контуром надо на том же подмножестве.
     """
     from .keypoints_backend import KeypointBackend
     from .pipeline import Analyzer
 
     df = trainset.frames()
+    if folds is not None:
+        df = df[df.fold.isin(folds)].reset_index(drop=True)
     a = Analyzer.load(hip_method=hip_method, keypoints=keypoints or keypoints_oof,
                       cnn=False, cnn_oof=cnn, roi_rule=roi_rule)
     by_fold = {}
@@ -112,7 +118,8 @@ def run(hip_method: str = 'kit2', keypoints: bool = False,
             by_fold[int(k)] = KeypointBackend(folds=[int(k)])
         missing = [k for k, b in by_fold.items() if not b.available]
         if missing:
-            raise SystemExit(f'для OOF нужны веса всех фолдов, нет: {missing}')
+            raise SystemExit(f'для OOF нужны веса каждого оцениваемого фолда, нет: {missing}; '
+                             'оценить только обученные фолды: --folds')
     rows = []
     for r in df.itertuples():
         px = trainset.read(r.rel_path)
@@ -351,11 +358,13 @@ def main() -> int:
     ap.add_argument('--no-cnn', action='store_true',
                     help='без нейросети cnn_qc: вердикт по одной геометрии (базовая линия)')
     ap.add_argument('--roi-rule', default='scan_length', choices=('scan_length', 'margins'))
+    ap.add_argument('--folds', type=int, nargs='+', default=None,
+                    help='только кадры этих фолдов (модель точек обучена не на всех)')
     ap.add_argument('--out', type=Path, default=METRICS, help='куда положить метрики')
     args = ap.parse_args()
 
     d = run(args.hip_method, keypoints=args.keypoints, keypoints_oof=args.keypoints_oof,
-            cnn=not args.no_cnn, roi_rule=args.roi_rule)
+            cnn=not args.no_cnn, roi_rule=args.roi_rule, folds=args.folds)
     cnn_flags = int(d['flags'].str.contains('cnn:').sum())
     if cnn_flags:
         print(f'у {cnn_flags} кадров нет вердикта сети (флаг cnn:*): в OOF-режиме это кадры '

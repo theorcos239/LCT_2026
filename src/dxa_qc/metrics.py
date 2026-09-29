@@ -42,23 +42,68 @@ def per_point(names: list[str], pred: np.ndarray, conf: np.ndarray, true: np.nda
 
 
 def calibrate_thresholds(names: list[str], conf: np.ndarray, visible: np.ndarray,
-                         labeled: np.ndarray, grid: np.ndarray | None = None) -> pd.Series:
-    """Порог видимости по каждой точке отдельно: у th12_top и trochanter_major разная сложность."""
-    grid = np.linspace(0.05, 0.95, 91) if grid is None else grid
+                         labeled: np.ndarray, grid: np.ndarray | None = None,
+                         objective: str = "balanced", default: float = 0.5,
+                         min_negatives: int = 10, fallback_miss: float = 0.02) -> pd.Series:
+    """Порог видимости по каждой точке отдельно: у th12_top и trochanter_major разная сложность.
+
+    objective="f1" — прежнее правило: максимум F1 класса «видна». Отсутствующих
+    примеров мало, и F1 почти не штрафует за ложную «видимость», поэтому пороги
+    уезжали на нижний край сетки (0.05) — модель переставала говорить «точки
+    нет» и выдумывала её. objective="balanced" — максимум (TPR + TNR) / 2: пропуск
+    видимой и выдумывание отсутствующей точки стоят одинаково.
+
+    Если отсутствующих примеров меньше min_negatives (середина позвоночника:
+    центры L2–L3 в кадре почти всегда, даже с обрезанным краем), балансировать
+    не с чем. Тогда порог — квантиль fallback_miss уверенности видимых: теряется
+    не больше 2 % видимых. Фиксированный default здесь не годится: у разных
+    каналов пик разной высоты, и порог 0.5 терял до 95 % видимых L2 и L3.
+    default — только если нет и видимых примеров.
+    """
+    grid = np.linspace(0.02, 0.98, 97) if grid is None else grid
     out = {}
     for c, name in enumerate(names):
         lab, vis, cf = labeled[:, c], visible[:, c], conf[:, c]
-        best, best_f1 = 0.5, -1.0
+        pos, neg = (vis & lab), (~vis & lab)
+        if objective == "balanced" and neg.sum() < min_negatives:
+            out[name] = (float(np.clip(np.quantile(cf[pos], fallback_miss), grid[0], grid[-1]))
+                         if pos.any() else default)
+            continue
+        best, best_score = default, -1.0
         for t in grid:
             found = cf >= t
-            tp = (found & vis & lab).sum()
-            fp = (found & ~vis & lab).sum()
-            fn = (~found & vis & lab).sum()
-            f1 = 2 * tp / max(2 * tp + fp + fn, 1)
-            if f1 > best_f1:
-                best, best_f1 = float(t), f1
+            tp, fn = (found & pos).sum(), (~found & pos).sum()
+            fp, tn = (found & neg).sum(), (~found & neg).sum()
+            if objective == "f1":
+                score = 2 * tp / max(2 * tp + fp + fn, 1)
+            else:
+                score = tp / max(tp + fn, 1) + tn / max(tn + fp, 1)
+            if score > best_score + 1e-12:
+                best, best_score = float(t), score
         out[name] = best
     return pd.Series(out, name="threshold")
+
+
+def visibility_table(names: list[str], conf: np.ndarray, visible: np.ndarray,
+                     labeled: np.ndarray, threshold) -> pd.DataFrame:
+    """Сколько раз модель выдумывает точку и сколько раз теряет видимую.
+
+    hallucination_rate — доля отсутствующих в кадре точек, которые модель
+    объявила видимыми; miss_rate — доля видимых, объявленных отсутствующими.
+    """
+    found = conf >= np.asarray(threshold)
+    rows = []
+    for c, name in enumerate(names):
+        lab = labeled[:, c]
+        pos, neg = visible[:, c] & lab, ~visible[:, c] & lab
+        tp, fn = (found[:, c] & pos).sum(), (~found[:, c] & pos).sum()
+        fp, tn = (found[:, c] & neg).sum(), (~found[:, c] & neg).sum()
+        rows.append(dict(point=name, n_visible=int(pos.sum()), n_absent=int(neg.sum()),
+                         hallucination_rate=fp / neg.sum() if neg.sum() else np.nan,
+                         miss_rate=fn / pos.sum() if pos.sum() else np.nan,
+                         balanced_acc=0.5 * (tp / max(pos.sum(), 1) + tn / max(neg.sum(), 1))
+                         if neg.sum() and pos.sum() else np.nan))
+    return pd.DataFrame(rows)
 
 
 def axis_angle(centers: np.ndarray) -> float:
@@ -80,8 +125,13 @@ def axis_curvature(centers: np.ndarray, mm_per_px: float = MM_PER_PX) -> float:
 
 def end_to_end(names: list[str], pred: np.ndarray, true: np.ndarray, visible: np.ndarray,
                regions: np.ndarray) -> pd.DataFrame:
-    """Ошибка производных величин: угол оси и отступы, предсказание против разметки."""
+    """Ошибка производных величин: угол оси, отступы ROI и выступ малого вертела.
+
+    Выступ — shaft_medial.x − trochanter_minor.x (в кадре модели медиальная
+    сторона слева), та же конструкция, что `bulge_from_points` в сервисе.
+    """
     idx = {n: i for i, n in enumerate(names)}
+    bulge = (idx["trochanter_minor"], idx["shaft_medial"])
     spine_axis = [idx[f"l{i}_center"] for i in range(1, 5)]
     margins = {"top": idx["trochanter_major"], "bottom": idx["ischium_bottom"],
                "lateral": idx["trochanter_lateral"]}
@@ -96,6 +146,10 @@ def end_to_end(names: list[str], pred: np.ndarray, true: np.ndarray, visible: np
                     d = np.abs(pred[i, c] - true[i, c]) * MM_PER_PX
                     rows.append(dict(kind=f"margin_{name}_mm",
                                      error=d[1] if name != "lateral" else d[0]))
+            if visible[i, list(bulge)].all():
+                b_pred = pred[i, bulge[1], 0] - pred[i, bulge[0], 0]
+                b_true = true[i, bulge[1], 0] - true[i, bulge[0], 0]
+                rows.append(dict(kind="bulge_mm", error=abs(b_pred - b_true) * MM_PER_PX))
     if not rows:
         return pd.DataFrame(columns=["kind", "median", "p90", "n"])
     df = pd.DataFrame(rows)

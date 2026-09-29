@@ -1,6 +1,11 @@
 """Обучение модели точек по фолдам из folds.csv.
 
 python -m dxa_qc.train --config configs/keypoints.yaml [--set train.epochs=50]
+
+Досрочная остановка: прервать процесс и запустить с --finalize (с теми же --set).
+Обучение не продолжается: у фолдов с лучшими весами fold{N}.pt, но без OOF,
+OOF считается от этих весов, необученные фолды пропускаются, пороги и метрики
+собираются по тому, что есть.
 """
 from __future__ import annotations
 
@@ -15,10 +20,11 @@ import torch
 from torch.utils.data import DataLoader
 
 from . import config as cfgmod
+from . import evaluate as E
 from . import folds as foldsmod
 from . import metrics as M
 from . import pack as packmod
-from .dataset import KeypointDataset
+from .dataset import KeypointDataset, TruncatedDataset
 from .heatmaps import decode
 from .loss import focal_heatmap_loss
 from .model import KeypointNet
@@ -71,7 +77,7 @@ def predict(model, loader, device, window: int):
     out = {k: [] for k in ("pred", "conf", "true", "visible", "labeled", "index")}
     for batch in loader:
         logits = model(batch["image"].to(device))
-        coords, conf = decode(torch.sigmoid(logits), window)
+        coords, conf = decode(torch.sigmoid(logits), window, batch.get("hw"))
         out["pred"].append(coords.cpu().numpy())
         out["conf"].append(conf.cpu().numpy())
         out["true"].append(batch["coords"].numpy())
@@ -82,9 +88,12 @@ def predict(model, loader, device, window: int):
 
 
 def run_fold(cfg: dict, data: dict, fold: int, device: torch.device,
-             resume: bool = True, on_checkpoint=None) -> dict:
+             resume: bool = True, on_checkpoint=None, finalize: bool = False) -> dict:
     """on_checkpoint(fold, epoch, out_dir) вызывается после записи fold{N}_last.pt —
-    например, чтобы скопировать чекпоинты на Диск."""
+    например, чтобы скопировать чекпоинты на Диск.
+
+    finalize=True — не обучать дальше, только посчитать OOF от лучших весов fold{N}.pt.
+    """
     names = data["names"]
     studies = np.array(data["studies"])
     folds = foldsmod.load(cfg["data"]["folds"], set(map(str, studies)))
@@ -98,6 +107,7 @@ def run_fold(cfg: dict, data: dict, fold: int, device: torch.device,
                   use_clahe=d["use_clahe"], seed=cfg["seed"])
     train_ds = KeypointDataset(data, train_idx, aug=AugmentConfig(**cfg["augment"]), **common)
     val_ds = KeypointDataset(data, val_idx, aug=AugmentConfig(enabled=False), **common)
+    trunc_ds = TruncatedDataset(data, val_idx, cfg.get("eval", {}).get("crops_per_image", 6), **common)
     # persistent_workers: без него воркеры пересоздаются на каждой эпохе, и на
     # Windows (spawn) каждый заново получает весь pack — эпоха шла 19 с вместо
     # 2.3 с при GPU, загруженном на 2 %. Подготовка кадра стоит ~3 мс, так что
@@ -106,6 +116,7 @@ def run_fold(cfg: dict, data: dict, fold: int, device: torch.device,
     train_dl = DataLoader(train_ds, batch_size=t["batch_size"], shuffle=True,
                           drop_last=len(train_ds) > t["batch_size"], **loader)
     val_dl = DataLoader(val_ds, batch_size=t["batch_size"], **loader)
+    trunc_dl = DataLoader(trunc_ds, batch_size=t["batch_size"], **loader)
 
     model = KeypointNet(len(names), tuple(cfg["model"]["decoder_channels"]),
                         cfg["model"]["pretrained"]).to(device)
@@ -133,7 +144,11 @@ def run_fold(cfg: dict, data: dict, fold: int, device: torch.device,
         print(f"fold {fold}: продолжаем с эпохи {start_epoch} "
               f"(лучшая медиана {best['median_mm']:.2f} мм)")
 
-    for epoch in range(start_epoch, t["epochs"]):
+    if finalize:
+        saved = torch.load(best_path, map_location="cpu", weights_only=False)
+        best.update(median_mm=saved["median_mm"], epoch=saved["epoch"])
+        print(f"fold {fold}: обучение остановлено, берём лучшие веса эпохи {best['epoch']}")
+    for epoch in range(start_epoch, t["epochs"] if not finalize else start_epoch):
         model.train()
         train_ds.epoch = epoch
         for batch in train_dl:
@@ -150,7 +165,11 @@ def run_fold(cfg: dict, data: dict, fold: int, device: torch.device,
         oof = predict(ema.shadow, val_dl, device, cfg["heatmap"]["decode_window"])
         err = np.linalg.norm(oof["pred"] - oof["true"], axis=-1) * d["mm_per_px"]
         median = float(np.median(err[oof["visible"]])) if oof["visible"].any() else math.inf
-        history.append({"epoch": epoch, "loss": float(loss), "median_mm": median})
+        row = {"epoch": epoch, "loss": float(loss), "median_mm": median}
+        if epoch % t.get("trunc_eval_every", 10) == 0 or epoch == t["epochs"] - 1:
+            row.update(_visibility_at(predict(ema.shadow, trunc_dl, device,
+                                              cfg["heatmap"]["decode_window"]), 0.5))
+        history.append(row)
         pd.DataFrame(history).to_csv(history_path, index=False)
 
         if median < best["median_mm"]:
@@ -174,9 +193,20 @@ def run_fold(cfg: dict, data: dict, fold: int, device: torch.device,
     ema.shadow.load_state_dict(torch.load(best_path, map_location=device,
                                           weights_only=False)["model"])
     best["oof"] = predict(ema.shadow, val_dl, device, cfg["heatmap"]["decode_window"])
+    trunc = predict(ema.shadow, trunc_dl, device, cfg["heatmap"]["decode_window"])
+    best["oof"].update({f"trunc_{k}": v for k, v in trunc.items()})
     np.savez_compressed(out_dir / f"oof_fold{fold}.npz", **best["oof"])
     print(f"fold {fold}: лучшая медиана {best['median_mm']:.2f} мм (эпоха {best['epoch']})")
     return best
+
+
+def _visibility_at(oof: dict, threshold: float) -> dict:
+    """Выдумывание и потери видимости на обрезанных кадрах при фиксированном пороге."""
+    lab = oof["labeled"]
+    pos, neg = oof["visible"] & lab, ~oof["visible"] & lab
+    found = oof["conf"] >= threshold
+    return {"halluc_rate": float((found & neg).sum() / max(neg.sum(), 1)),
+            "miss_rate": float((~found & pos).sum() / max(pos.sum(), 1))}
 
 
 def save_predictions(data: dict, oof: dict, thresholds: pd.Series, out_dir: Path) -> None:
@@ -210,7 +240,8 @@ def save_predictions(data: dict, oof: dict, thresholds: pd.Series, out_dir: Path
     pd.DataFrame(rows).to_csv(out_dir / "oof_points.csv", index=False)
 
 
-def train_all(cfg: dict, resume: bool = True, on_checkpoint=None) -> dict:
+def train_all(cfg: dict, resume: bool = True, on_checkpoint=None,
+              finalize: bool = False) -> dict:
     """Обучение по всем фолдам конфига. Возвращает OOF-предсказания, метрики и пороги.
 
     С resume=True продолжает прерванный прогон: готовые фолды пропускает, незаконченный
@@ -231,24 +262,46 @@ def train_all(cfg: dict, resume: bool = True, on_checkpoint=None) -> dict:
         if resume and done.exists():
             print(f"fold {fold}: уже обучен, пропускаем ({done})")
             oof[fold] = dict(np.load(done))
+        elif finalize and not (out_dir / f"fold{fold}.pt").exists():
+            print(f"fold {fold}: не обучался, в прогон не входит")
         else:
-            oof[fold] = run_fold(cfg, data, fold, device, resume, on_checkpoint)["oof"]
-    keys = ("pred", "conf", "true", "visible", "labeled", "index")
-    merged = {k: np.concatenate([oof[f][k] for f in oof]) for k in keys}
+            oof[fold] = run_fold(cfg, data, fold, device, resume, on_checkpoint,
+                                 finalize)["oof"]
+    # Пороги и метрики — по рабочему инференсу (Predictor: TTA, маска заполнения,
+    # цепочка позвоночника), а не по одиночному проходу из run_fold: TTA снижает
+    # высоту пиков, и порог одиночного прохода в сервисе терял видимые точки.
+    # Порог калибруется на исходных и обрезанных отложенных кадрах вместе: без
+    # обрезанных отсутствующих примеров почти нет (см. metrics.calibrate_thresholds).
+    trained = sorted(oof)
+    inf = cfg.get("infer", {})
+    crops = cfg.get("eval", {}).get("crops_per_image", 6)
+    folds_inf = E.fold_oof(out_dir, data, device, crops, folds=trained)
+    thresholds = E.calibrate(data["names"], folds_inf,
+                             objective=inf.get("threshold_objective", "balanced"),
+                             default=float(inf.get("visibility_threshold", 0.5)))
+    thresholds.to_csv(out_dir / "thresholds.csv")
+    # какие центры позвонков идут в цепочку, решает порог — пересчитать с новым
+    folds_inf = E.fold_oof(out_dir, data, device, crops, folds=trained,
+                           thresholds=thresholds.to_numpy())
+    merged = E.concat([f["orig"] for f in folds_inf])
+    trunc = E.concat([f["trunc"] for f in folds_inf])
+    vis_src = E.pooled(folds_inf)
 
-    thresholds = M.calibrate_thresholds(data["names"], merged["conf"], merged["visible"],
-                                        merged["labeled"])
     table = M.per_point(data["names"], merged["pred"], merged["conf"], merged["true"],
                         merged["visible"], merged["labeled"],
                         thresholds.to_numpy(), cfg["data"]["mm_per_px"])
     e2e = M.end_to_end(data["names"], merged["pred"], merged["true"], merged["visible"],
                        np.array(data["regions"])[merged["index"]])
+    vis = M.visibility_table(data["names"], vis_src["conf"], vis_src["visible"],
+                             vis_src["labeled"], thresholds.to_numpy())
 
-    thresholds.to_csv(out_dir / "thresholds.csv")
     table.to_csv(out_dir / "metrics_per_point.csv", index=False)
     e2e.to_csv(out_dir / "metrics_end_to_end.csv", index=False)
+    vis.to_csv(out_dir / "metrics_visibility.csv", index=False)
     save_predictions(data, merged, thresholds, out_dir)
-    return {"data": data, "oof": merged, "per_point": table, "end_to_end": e2e,
+    np.savez_compressed(out_dir / "oof_truncated.npz", names=np.array(data["names"]), **trunc)
+    return {"data": data, "oof": merged, "trunc": trunc, "per_point": table,
+            "visibility": vis, "end_to_end": e2e,
             "thresholds": thresholds, "out_dir": out_dir, "device": str(device)}
 
 
@@ -258,11 +311,15 @@ def main() -> None:
     p.add_argument("--set", nargs="*", default=[], dest="overrides")
     p.add_argument("--no-resume", action="store_true",
                    help="начать заново, игнорируя чекпоинты в out_dir")
+    p.add_argument("--finalize", action="store_true",
+                   help="не обучать дальше: собрать прогон из уже сохранённых лучших весов")
     a = p.parse_args()
 
-    result = train_all(cfgmod.load(a.config, a.overrides), resume=not a.no_resume)
+    result = train_all(cfgmod.load(a.config, a.overrides), resume=not a.no_resume,
+                       finalize=a.finalize)
     pd.set_option("display.width", 200)
     print(result["per_point"].round(2).to_string(index=False))
+    print(result["visibility"].round(3).to_string(index=False))
     print(result["end_to_end"].round(2).to_string(index=False))
 
 

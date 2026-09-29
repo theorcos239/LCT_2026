@@ -41,6 +41,13 @@
 точек, обученная без фолда k, так что отложенные снимки не видела ни одна из
 двух сетей.
 
+Поставленная сеть и цифры ниже получены от энкодера **предыдущей версии**
+модели точек (5 фолдов). Её заменила модель, которая не выдумывает точки
+(см. README, «Модель ключевых точек»), но у неё пока обучены фолды 0–1 из
+пяти. ONNX сети от весов модели точек не зависят и работают как есть;
+повторное обучение с `--init keypoints` требует всех пяти фолдов и без них
+останавливается с сообщением.
+
 | | ротация, 36 из 150 | посторонние предметы, 17 из 99 |
 |---|---|---|
 | геометрия, ROC-AUC | 0.68 [0.55–0.80] | 0.79 [0.64–0.92] |
@@ -102,7 +109,7 @@ r['p_cnn'], r['probability'], r['violated'], r['heatmap']
 ```bash
 pip install -r requirements-train.txt           # torch, torchvision, onnx
 python -m cnn_qc.train --criterion rotation     # ~6 мин на GPU: OOF 5 фолдов × 3 сида + ансамбль
-python -m cnn_qc.train --criterion artifacts --init keypoints  # нужны runs/keypoints/fold*.pt
+python -m cnn_qc.train --criterion artifacts --init keypoints  # нужны runs/keypoints/fold0..4.pt
 python -m cnn_qc.train --criterion rotation --calibrate-only   # только свод и порог по oof.csv
 ```
 

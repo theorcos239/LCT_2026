@@ -2,6 +2,8 @@
 
 Маскирование живёт только в функции потерь, поэтому здесь считаются все каналы:
 какая группа заговорила — та и область. Отдельный классификатор области не нужен.
+У позвоночника координаты затем согласуются по структуре (structure.py,
+`infer.spine_chain`): каналы центров не прыгают на соседний позвонок.
 """
 from __future__ import annotations
 
@@ -14,8 +16,9 @@ import torch.nn.functional as F
 
 from . import points as P
 from .dataset import normalize, pad_to_multiple
-from .heatmaps import decode
+from .heatmaps import decode, mask_outside
 from .model import KeypointNet
+from .structure import chain_decode
 
 # Каталог прогона по умолчанию — тот же, что train.out_dir в configs/keypoints.yaml.
 RUN_DIR = Path(__file__).resolve().parents[2] / "runs" / "keypoints"
@@ -71,13 +74,21 @@ class Predictor:
                 n += 1
         return (acc / n)[0]
 
-    def predict(self, image: np.ndarray) -> dict:
-        h = self.heatmaps(image)
-        coords, conf = decode(h[None], self.cfg["heatmap"]["decode_window"])
+    def predict(self, image: np.ndarray, chain: bool | None = None) -> dict:
+        """chain — согласовать позвоночник по структуре; None — как в конфиге (infer.spine_chain)."""
+        window = self.cfg["heatmap"]["decode_window"]
+        # Кадр дополнен нулями до кратности 32: точки в заполнении быть не может.
+        h = mask_outside(self.heatmaps(image)[None], image.shape)
+        coords, conf = decode(h, window)
         coords, conf = coords[0].cpu().numpy(), conf[0].cpu().numpy()
         visible = conf >= self.thresholds
         # какая группа каналов заговорила, та и область
         region = max(self.regions, key=lambda r: float(np.sort(conf[self.regions[r]])[-3:].mean()))
+        if chain is None:
+            chain = self.cfg["infer"].get("spine_chain", True)
+        if region == "spine" and chain:
+            # центры L1–L4 — соседние позвонки, диски и края — на своём уровне
+            coords = chain_decode(h[0].cpu().numpy(), self.names, coords, visible, window)
         return {
             "names": self.names,
             "coords": coords,                       # (C, 2) в координатах исходного снимка

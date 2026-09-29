@@ -29,11 +29,31 @@ def render(coords: np.ndarray, visible: np.ndarray, shape: tuple[int, int],
     return out
 
 
-def decode(heatmaps: torch.Tensor, window: int = 11) -> tuple[torch.Tensor, torch.Tensor]:
+def mask_outside(heatmaps: torch.Tensor, hw) -> torch.Tensor:
+    """Обнулить карты за пределами снимка (дополнение до холста / кратности 32).
+
+    Точки там быть не может: это не часть поля сканирования. Без маски максимум
+    шума в заполнении становится «найденной» точкой.
+    """
+    if hw is None:
+        return heatmaps
+    out = heatmaps.clone()
+    hw = torch.as_tensor(hw).reshape(-1, 2).tolist()
+    if len(hw) == 1 and out.shape[0] > 1:
+        hw = hw * out.shape[0]
+    for i, (h, w) in enumerate(hw):
+        out[i, :, int(h):, :] = 0
+        out[i, :, :, int(w):] = 0
+    return out
+
+
+def decode(heatmaps: torch.Tensor, window: int = 11, hw=None) -> tuple[torch.Tensor, torch.Tensor]:
     """Пик + soft-argmax в окне вокруг него.
 
     Возвращает координаты (B, C, 2) в порядке (x, y) и уверенность (B, C) — значение пика.
+    hw — размер снимка (B, 2) или (2,): всё за его пределами в поиск пика не идёт.
     """
+    heatmaps = mask_outside(heatmaps, hw)
     b, c, h, w = heatmaps.shape
     flat = heatmaps.flatten(2)
     conf, idx = flat.max(dim=2)

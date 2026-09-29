@@ -3,7 +3,7 @@ deterministic: true
 data:
   pack: data/keypoints.npz
   folds: folds.csv
-  spine_edges: true
+  points: full
   canvas:
   - 352
   - 320
@@ -40,6 +40,10 @@ augment:
   p_geometric: 0.9
   p_intensity: 0.7
   p_hflip_spine: 0.5
+  p_crop: 0.5
+  crop_max_frac: 0.35
+  crop_targeted: 0.6
+  crop_jitter_px: 10.0
 train:
   folds:
   - 0
@@ -56,13 +60,18 @@ train:
   warmup_epochs: 5
   patience: 600
   checkpoint_every: 50
+  trunc_eval_every: 10
   ema_decay: 0.999
   amp: false
   out_dir: runs/keypoints
 infer:
-  visibility_threshold: 0.3
+  visibility_threshold: 0.5
+  threshold_objective: balanced
   tta_rotations:
   - -5
   - 0
   - 5
   tta_flip_spine: true
+  spine_chain: true
+eval:
+  crops_per_image: 6

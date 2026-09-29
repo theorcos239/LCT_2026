@@ -36,23 +36,33 @@ augment:
   p_geometric: 0.9
   p_intensity: 0.7
   p_hflip_spine: 0.5                  # бедро не отражаем: оно приведено к левому
+  p_crop: 0.5                         # обрезать край: учит говорить «точки нет в кадре»
+  crop_max_frac: 0.35                 # не больше трети кадра
+  crop_targeted: 0.6                  # доля обрезов вплотную к размеченной точке
+  crop_jitter_px: 10.0                # ±6 мм вокруг точки: трудные примеры у границы
 
 train:
   folds: [0, 1, 2, 3, 4]
-  epochs: 300
+  epochs: 600                         # лучшая эпоха фолда 0 — 279, фолд 1 остановлен на 329 (см. README)
   batch_size: 16
   num_workers: 4
   lr_encoder: 3.0e-5
   lr_decoder: 3.0e-4
   weight_decay: 1.0e-4
   warmup_epochs: 5
-  patience: 300                       # ранняя остановка по медианной ошибке в мм (>= epochs — выключена)
+  patience: 600                       # ранняя остановка по медианной ошибке в мм (>= epochs — выключена)
   checkpoint_every: 50                # как часто писать fold{N}_last.pt для продолжения
+  trunc_eval_every: 10                # как часто мерить выдумывание точек на обрезанных кадрах
   ema_decay: 0.999
   amp: false                          # титаны могут быть Pascal
   out_dir: runs/keypoints
 
 infer:
-  visibility_threshold: 0.3           # калибруется на OOF, отдельно по каждой точке
+  visibility_threshold: 0.5           # если отсутствующих примеров точки мало для калибровки
+  threshold_objective: balanced       # (TPR + TNR) / 2; f1 уводил пороги к 0.05 и точки выдумывались
   tta_rotations: [-5, 0, 5]
   tta_flip_spine: true                # с обратной перестановкой каналов
+  spine_chain: true                   # центры L1–L4 — соседние позвонки (structure.py)
+
+eval:
+  crops_per_image: 6                  # обрезанных вариантов отложенного кадра: видимость известна точно

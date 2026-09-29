@@ -381,6 +381,14 @@ def main() -> int:
         # отложенного фолда не видела ни одна из двух моделей.
         return kp_dir / f'fold{int(fold) % 5}.pt' if args.init == 'keypoints' else None
 
+    if args.init == 'keypoints':
+        missing = [k for k in range(5) if not (kp_dir / f'fold{k}.pt').exists()]
+        if missing:
+            # Подменять недостающий фолд чужим нельзя: модель точек другого
+            # фолда видела отложенные снимки, и OOF-оценка сети стала бы утечкой.
+            raise SystemExit(f'--init keypoints: нет весов модели точек для фолдов {missing} '
+                             f'в {kp_dir}; дообучите их: python -m dxa_qc.train')
+
     cfg = CRITERIA[args.criterion]
     out = HERE / (args.criterion + (f'_{args.tag}' if args.tag else ''))
     out.mkdir(exist_ok=True)
