@@ -1,12 +1,14 @@
 {
-  "area_lo": 95.7,
-  "area_hi": 271.8,
+  "area_lo": 98.9,
+  "area_hi": 312.9,
   "appearance": 0.5,
   "neck_mm": 14.0,
   "fit_mm": 55.0,
-  "corridor_percentile": 15.0,
+  "score": "area",
+  "corridor_percentile_lo": 15.0,
+  "corridor_percentile_hi": 5.0,
   "probability": {
-    "w": 0.019977,
-    "b": -1.685699
+    "w": 0.026716,
+    "b": -1.743853
   }
 }

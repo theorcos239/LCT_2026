@@ -237,7 +237,7 @@ def honest(d: pd.DataFrame, n_boot: int = 2000, cnn: bool = True) -> dict:
     pred, score, probs = {}, {}, {}
 
     ds, X = measure(trainset.frames('spine'))
-    oof_pred, _, _, oof_prob = out_of_fold(ds, X)
+    oof_pred, _, _, oof_prob, _ = out_of_fold(ds, X)
     for name, key in (('position', 'spine_position'), ('axis', 'spine_axis'),
                       ('artifacts', 'spine_artifacts')):
         pred[key] = dict(zip(ds.rel_path, oof_pred[name]))
