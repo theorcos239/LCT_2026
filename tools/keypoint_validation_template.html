@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Валидация точек DXA</title>
+<style>
+  :root { color-scheme: dark; font: 15px/1.45 system-ui, sans-serif; background: #10151c; color: #e8edf2; }
+  * { box-sizing: border-box; }
+  body { margin: 0; }
+  header { padding: 20px 24px 12px; border-bottom: 1px solid #303a45; }
+  h1 { margin: 0 0 6px; font-size: 23px; }
+  h2 { margin: 0 0 12px; font-size: 17px; }
+  .subtle { color: #aab7c4; }
+  .notice { background: #253041; padding: 9px 12px; border-radius: 7px; margin-top: 10px; }
+  .stats { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 15px; }
+  .stat { background: #1c2530; padding: 10px 14px; border-radius: 8px; min-width: 125px; }
+  .stat b { display: block; font-size: 21px; font-variant-numeric: tabular-nums; }
+  main { display: grid; grid-template-columns: 280px minmax(360px, 1fr) minmax(300px, 440px); gap: 16px; padding: 16px 24px 26px; }
+  section, aside { min-width: 0; }
+  .panel { background: #19212b; border: 1px solid #303a45; border-radius: 9px; padding: 14px; }
+  label { display: block; margin-bottom: 9px; }
+  select, input { width: 100%; background: #10151c; color: #e8edf2; border: 1px solid #485461; border-radius: 5px; padding: 8px; font: inherit; }
+  button { cursor: pointer; color: inherit; background: #293647; border: 1px solid #485461; border-radius: 5px; padding: 7px 10px; font: inherit; }
+  button:hover, button:focus { background: #40546d; }
+  .nav { display: flex; gap: 8px; margin: 8px 0 14px; }
+  .nav button { flex: 1; }
+  #list { max-height: 58vh; overflow: auto; border-top: 1px solid #303a45; }
+  .item { display: block; width: 100%; text-align: left; border: 0; border-bottom: 1px solid #303a45; border-radius: 0; padding: 8px; background: transparent; }
+  .item.active { background: #304660; }
+  .item small { display: block; color: #abb9c7; }
+  .figure { position: relative; width: fit-content; max-width: 100%; margin: 0 auto; }
+  .figure img { display: block; width: auto; height: auto; max-width: 100%; max-height: 72vh; }
+  .figure svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+  .truth { fill: #50e3a4; stroke: #102820; stroke-width: 1.4; }
+  .pred { fill: none; stroke: #ff5eb7; stroke-width: 2.3; }
+  .error-line { stroke: #ffd163; stroke-width: 1.1; stroke-dasharray: 3 2; }
+  .point-label { fill: white; font: 9px system-ui, sans-serif; paint-order: stroke; stroke: #141820; stroke-width: 2.5px; }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; margin: 9px 0; font-size: 13px; }
+  .green { color: #50e3a4; } .pink { color: #ff5eb7; } .yellow { color: #ffd163; }
+  .detail { color: #abb9c7; font-size: 13px; overflow-wrap: anywhere; }
+  .chart { display: flex; align-items: flex-end; gap: 5px; height: 94px; margin: 12px 0 4px; border-bottom: 1px solid #566371; }
+  .bar-wrap { flex: 1; text-align: center; font-size: 11px; color: #aab7c4; }
+  .bar { width: 100%; background: #619ed4; min-height: 2px; border-radius: 3px 3px 0 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 12px; }
+  th, td { text-align: left; padding: 6px 4px; border-bottom: 1px solid #303a45; font-variant-numeric: tabular-nums; }
+  th { position: sticky; top: 0; background: #19212b; }
+  tr.bad td { color: #ffd163; }
+  .table-scroll { max-height: 56vh; overflow: auto; }
+  @media (max-width: 1100px) { main { grid-template-columns: 230px minmax(300px, 1fr); } main section:last-child { grid-column: 1 / -1; } }
+  @media (max-width: 700px) { main { display: block; padding: 10px; } .panel { margin-bottom: 10px; } #list { max-height: 180px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Валидация модели точек</h1>
+  <div class="subtle">Отложенные снимки по исследованиям: предсказание модели против разметки врача</div>
+  <div class="notice" id="notice"></div>
+  <div class="stats" id="stats"></div>
+</header>
+<main>
+  <aside class="panel">
+    <h2>Снимки</h2>
+    <label>Область<select id="region"><option value="all">Все</option><option value="spine">Позвоночник</option><option value="hip">Бедро</option></select></label>
+    <label>Фолд<select id="fold"><option value="all">Все</option></select></label>
+    <label>Случай<select id="case"><option value="all">Все</option><option value="wrong">Ошибочный уровень (все пики)</option><option value="wrong_active">Ошибочный уровень (4 найдены)</option><option value="missed">Пропущенная точка</option><option value="hallucinated">Ложная точка</option></select></label>
+    <label>Сортировка<select id="sort"><option value="worst">Наибольшая ошибка</option><option value="index">Порядок в наборе</option><option value="best">Наименьшая ошибка</option></select></label>
+    <div class="nav"><button id="prev" type="button">← Предыдущий</button><button id="next" type="button">Следующий →</button></div>
+    <div class="subtle" id="count"></div>
+    <div id="list"></div>
+  </aside>
+  <section class="panel">
+    <h2 id="title">Снимок</h2>
+    <div class="detail" id="meta"></div>
+    <div class="legend"><span class="green">● Разметка</span><span class="pink">◯ Предсказание</span><span class="yellow">- Ошибка</span></div>
+    <div class="figure"><img id="image" alt="DXA-снимок"><svg id="overlay" aria-label="Ключевые точки"></svg></div>
+    <div class="detail" id="shifts"></div>
+  </section>
+  <section class="panel">
+    <h2>Ошибки и видимость</h2>
+    <div class="subtle" id="summary"></div>
+    <div id="chart" class="chart" aria-label="Распределение ошибок в миллиметрах"></div>
+    <div class="subtle">Распределение ошибок показано для выбранных снимков. «Нет» означает, что врач отметил отсутствие точки в кадре.</div>
+    <div class="table-scroll"><table><thead><tr><th>Точка</th><th>Врач</th><th>Модель</th><th>Ошибка</th><th>Пик / порог</th></tr></thead><tbody id="points"></tbody></table></div>
+  </section>
+</main>
+<script id="payload" type="application/json">__PAYLOAD__</script>
+<script>
+const DATA = JSON.parse(document.getElementById('payload').textContent);
+const $ = id => document.getElementById(id);
+const protocol = DATA.protocol === 'crossfit'
+  ? 'OOF с перекрёстным порогом: для каждого фолда порог взят с других OOF-фолдов, затем точки пересчитаны. Лучшая эпоха модели выбрана на оцениваемом фолде, поэтому это не независимый внешний тест.'
+  : 'Сохранённый OOF: проверьте источник весов и способ калибровки порогов перед сравнением прогонов.';
+$('notice').textContent = protocol + ' Ошибка в мм считается для размеченных видимых точек, которые модель признала видимыми.';
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const median = a => { if (!a.length) return null; const b=[...a].sort((x,y)=>x-y); return (b[(b.length-1)>>1]+b[b.length>>1])/2; };
+const fmt = x => x === null || !Number.isFinite(x) ? '—' : x.toFixed(2);
+let shown = [], selected = null;
+for (const fold of [...new Set(DATA.rows.map(r=>r.fold))].sort()) $('fold').insertAdjacentHTML('beforeend', `<option value="${fold}">${fold}</option>`);
+function filters() {
+  const region=$('region').value, fold=$('fold').value, kind=$('case').value;
+  shown=DATA.rows.filter(r => (region==='all'||r.region===region) && (fold==='all'||String(r.fold)===fold) &&
+    (kind==='all'||(kind==='wrong'&&r.wrong_level)||(kind==='wrong_active'&&r.wrong_level&&r.center4_found)||(kind==='missed'&&r.missed)||(kind==='hallucinated'&&r.hallucinated)));
+  const sort=$('sort').value;
+  shown.sort((a,b) => sort==='index' ? a.index-b.index : sort==='best' ? (a.max_error??Infinity)-(b.max_error??Infinity) : (b.max_error??-1)-(a.max_error??-1));
+  if (!shown.some(r=>r.key===selected)) selected=shown[0]?.key??null;
+  render();
+}
+function render() {
+  $('count').textContent=`${shown.length} снимков`;
+  $('list').innerHTML=shown.map(r=>`<button class="item ${r.key===selected?'active':''}" data-id="${r.key}">#${r.index}${r.crop_variant===null?'':' · обрез '+(r.crop_variant+1)} · ${r.region==='spine'?'Позвоночник':'Бедро'} · фолд ${r.fold}<small>${r.wrong_level?'⚠ уровень · ':''}max ${fmt(r.max_error)} мм · пропусков ${r.missed}</small></button>`).join('');
+  $('list').querySelectorAll('button').forEach(b=>b.onclick=()=>{selected=b.dataset.id;render();});
+  const pts=shown.flatMap(r=>r.points.filter(p=>p.error!==null).map(p=>p.error));
+  const wrong=shown.filter(r=>r.wrong_level).length;
+  const count=shown.filter(r=>r.level_shifts!==null).length;
+  const active=shown.filter(r=>r.level_shifts!==null&&r.center4_found);
+  const wrongActive=active.filter(r=>r.wrong_level).length;
+  $('stats').innerHTML=[['OOF-снимков',shown.length],['Медиана ошибки',fmt(median(pts))+' мм'],['Ошибочный уровень при 4 найденных',active.length?`${wrongActive}/${active.length}`:'—'],['Пропущено точек',shown.reduce((s,r)=>s+r.missed,0)]].map(([k,v])=>`<div class="stat"><b>${v}</b>${k}</div>`).join('');
+  $('summary').textContent=`В выборке ${pts.length} видимых найденных точек; p90 ${pts.length?fmt([...pts].sort((a,b)=>a-b)[Math.ceil(0.9*pts.length)-1]):'—'} мм. Ложных точек: ${shown.reduce((s,r)=>s+r.hallucinated,0)}. Ошибок уровня среди всех пиков: ${count?`${wrong}/${count}`:'—'} (включая точки, которые порог скрыл).`;
+  const bins=[0,0,0,0,0], labels=['≤1','1–3','3–5','5–10','>10'];
+  for(const e of pts) bins[e<=1?0:e<=3?1:e<=5?2:e<=10?3:4]++;
+  const top=Math.max(1,...bins);
+  $('chart').innerHTML=bins.map((v,i)=>`<div class="bar-wrap"><div class="bar" style="height:${Math.max(2,72*v/top)}px" title="${labels[i]} мм: ${v}"></div>${labels[i]}<br>${v}</div>`).join('');
+  const r=shown.find(x=>x.key===selected);
+  if(!r){$('title').textContent='Нет снимков';$('image').removeAttribute('src');$('overlay').innerHTML='';$('points').innerHTML='';$('meta').textContent='';$('shifts').textContent='';return;}
+  $('title').textContent=`Снимок #${r.index}${r.crop_variant===null?'':' · обрез '+(r.crop_variant+1)} · ${r.region==='spine'?'Позвоночник':'Бедро'}`;
+  $('meta').textContent=`Исследование ${r.study} · фолд ${r.fold} · ID ${r.id} · медиана ${fmt(r.median_error)} мм, максимум ${fmt(r.max_error)} мм`;
+  $('image').src=r.image;
+  $('overlay').setAttribute('viewBox',`0 0 ${r.width} ${r.height}`);
+  const node=(tag,attrs)=>{const e=document.createElementNS('http://www.w3.org/2000/svg',tag);for(const[k,v]of Object.entries(attrs))e.setAttribute(k,v);return e;};
+  $('overlay').replaceChildren();
+  for(const p of r.points){
+    if(p.true&&p.pred){$('overlay').append(node('line',{x1:p.true[0],y1:p.true[1],x2:p.pred[0],y2:p.pred[1],class:'error-line'}));}
+    if(p.true) $('overlay').append(node('circle',{cx:p.true[0],cy:p.true[1],r:3,class:'truth'}));
+    if(p.pred){$('overlay').append(node('circle',{cx:p.pred[0],cy:p.pred[1],r:5,class:'pred'}));const t=node('text',{x:p.pred[0]+6,y:p.pred[1]-5,class:'point-label'});t.textContent=p.name;$('overlay').append(t);}
+  }
+  $('shifts').textContent=r.level_shifts?`Сдвиг уровней L1–L4: ${r.level_shifts.map(x=>x>0?'+'+x:x).join(', ')}. Все четыре центра признаны видимыми: ${r.center4_found?'да':'нет'}. Ноль означает ближайший верный уровень; Th12 и L5 на краях оцениваются приближённо.`:'Для этого снимка оценка уровня L1–L4 неприменима.';
+  $('points').innerHTML=r.points.map(p=>`<tr class="${(p.error??0)>5||p.visible!==p.found?'bad':''}"><td>${esc(p.name)}</td><td>${p.visible?'да':'нет'}</td><td>${p.found?'да':'нет'}</td><td>${fmt(p.error)} мм</td><td>${p.conf.toFixed(3)} / ${p.threshold.toFixed(3)}</td></tr>`).join('');
+}
+function step(d){if(!shown.length)return;const i=shown.findIndex(r=>r.key===selected);selected=shown[(i+d+shown.length)%shown.length].key;render();}
+for(const id of ['region','fold','case','sort']) $(id).addEventListener('change',filters);
+$('prev').onclick=()=>step(-1);$('next').onclick=()=>step(1);
+document.addEventListener('keydown',e=>{if(e.target.tagName==='SELECT')return;if(e.key==='ArrowLeft')step(-1);if(e.key==='ArrowRight')step(1);});
+filters();
+</script>
+</body>
+</html>

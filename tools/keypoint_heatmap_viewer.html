@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Карты точек · Fold 0</title>
+  <style>
+    :root { color-scheme: dark; font: 15px/1.45 system-ui, -apple-system, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #10151d; color: #e8edf5; }
+    header { display: flex; gap: 1rem; align-items: baseline; padding: 1rem 1.4rem;
+             border-bottom: 1px solid #293543; }
+    h1 { font-size: 1.15rem; margin: 0; }
+    header span, .muted { color: #9fb0c4; }
+    main { display: grid; grid-template-columns: minmax(240px, 300px) 1fr;
+           min-height: calc(100vh - 68px); }
+    aside { padding: 1.25rem; border-right: 1px solid #293543; display: grid;
+            align-content: start; gap: 1rem; }
+    label { display: grid; gap: .4rem; color: #bfcbd9; font-size: .88rem; }
+    select, button { width: 100%; border: 1px solid #425469; border-radius: .55rem;
+                     background: #1c2632; color: #f2f5f9; padding: .58rem .7rem;
+                     font: inherit; }
+    button { cursor: pointer; }
+    button:hover { background: #2b3c4e; }
+    .row { display: flex; gap: .5rem; }
+    .row > * { flex: 1; }
+    input[type=range] { width: 100%; accent-color: #f6ad55; }
+    .check { display: flex; align-items: center; gap: .6rem; font-size: .9rem; }
+    .check input { width: 1rem; height: 1rem; accent-color: #f6ad55; }
+    .card { padding: .75rem; background: #19232e; border: 1px solid #2b3b4b;
+            border-radius: .7rem; font-size: .88rem; }
+    .card strong { color: #fff; }
+    .card div + div { margin-top: .25rem; }
+    .small { font-size: .78rem; color: #9fb0c4; }
+    .right { min-width: 0; display: grid; grid-template-rows: auto 1fr; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: .8rem; align-items: center;
+               padding: .75rem 1rem; border-bottom: 1px solid #293543; color: #aebed0; }
+    .swatch { display: inline-block; width: 95px; height: 10px; border-radius: 99px;
+              background: linear-gradient(90deg, #192aaa, #00bef0, #ffe100, #f5280f); }
+    .scroll { overflow: auto; display: flex; align-items: flex-start; justify-content: center;
+              padding: 1.4rem; background: #080c12; }
+    #stage { position: relative; flex: 0 0 auto; box-shadow: 0 8px 45px #0008;
+             background: #000; }
+    #stage img, #peaks { position: absolute; inset: 0; width: 100%; height: 100%;
+                         image-rendering: auto; }
+    #peaks { pointer-events: none; }
+    #status { color: #ffd09a; }
+    @media (max-width: 760px) {
+      main { grid-template-columns: 1fr; }
+      aside { border-right: 0; border-bottom: 1px solid #293543;
+              grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .wide { grid-column: 1 / -1; }
+      .scroll { min-height: 60vh; }
+    }
+  </style>
+</head>
+<body>
+  <header><h1>Тепловые карты точек</h1><span id="subtitle">Загрузка…</span></header>
+  <main>
+    <aside>
+      <label class="wide">Снимок отложенного фолда
+        <select id="imageSelect"></select>
+      </label>
+      <div class="row wide"><button id="prev">← Предыдущий</button><button id="next">Следующий →</button></div>
+      <label class="wide">Карта точки
+        <select id="channelSelect"></select>
+      </label>
+      <label>Масштаб карты
+        <select id="scaleSelect">
+          <option value="relative">Относительный пик</option>
+          <option value="absolute">Абсолютный 0–1</option>
+        </select>
+      </label>
+      <label>Увеличение
+        <select id="zoomSelect"><option value="1">1×</option><option value="1.5">1.5×</option>
+          <option value="2" selected>2×</option><option value="3">3×</option></select>
+      </label>
+      <label class="wide">Прозрачность карты: <span id="opacityValue">70%</span>
+        <input id="opacity" type="range" min="0" max="100" value="70">
+      </label>
+      <label class="check"><input id="showImage" type="checkbox" checked> Показывать снимок</label>
+      <label class="check"><input id="showPeaks" type="checkbox" checked> Отметить пики</label>
+      <div class="card wide" id="info">Выберите снимок и карту.</div>
+      <div class="card wide" id="runWarning" style="display:none; border-color:#a56b2b; color:#ffd09a"></div>
+      <div class="small wide">Кружки: локальные пики, разделённые не менее чем 8 пикселями. Порог поиска указан ниже; показаны до 30 пиков.</div>
+      <div class="wide" id="status"></div>
+    </aside>
+    <section class="right">
+      <div class="toolbar"><span class="swatch"></span><span>слабый отклик → сильный</span>
+        <span>Карты вычисляются моделью при выборе снимка</span></div>
+      <div class="scroll"><div id="stage"><img id="base" alt="DXA-снимок"><img id="heat" alt="Тепловая карта"><canvas id="peaks"></canvas></div></div>
+    </section>
+  </main>
+  <script>
+    const $ = id => document.getElementById(id);
+    const state = { images: [], channels: [], imageLoaded: null, serial: 0, view: null };
+    async function json(url) {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(`${r.status}: ${await r.text()}`);
+      return r.json();
+    }
+    function setStatus(message) { $('status').textContent = message || ''; }
+    function sizeStage(h, w) {
+      const zoom = Number($('zoomSelect').value);
+      $('stage').style.width = `${w * zoom}px`;
+      $('stage').style.height = `${h * zoom}px`;
+      $('peaks').width = w;
+      $('peaks').height = h;
+      drawPeaks();
+    }
+    function drawPeaks() {
+      const canvas = $('peaks'), ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (!$('showPeaks').checked || !state.view) return;
+      for (const [i, p] of state.view.peaks.slice(0, 12).entries()) {
+        ctx.beginPath(); ctx.arc(p.x, p.y, i === 0 ? 6 : 4, 0, Math.PI * 2);
+        ctx.strokeStyle = i === 0 ? '#ffffff' : '#fda54b';
+        ctx.lineWidth = i === 0 ? 2 : 1.4; ctx.stroke();
+        if (i < 6) { ctx.fillStyle = '#fff'; ctx.font = '11px system-ui';
+          ctx.fillText(String(i + 1), p.x + 7, p.y - 5); }
+      }
+    }
+    function updateAppearance() {
+      $('base').style.display = $('showImage').checked ? 'block' : 'none';
+      $('heat').style.opacity = Number($('opacity').value) / 100;
+      $('opacityValue').textContent = `${$('opacity').value}%`;
+      drawPeaks();
+    }
+    async function show() {
+      const serial = ++state.serial;
+      const index = Number($('imageSelect').value);
+      const channel = Number($('channelSelect').value);
+      const scale = $('scaleSelect').value;
+      setStatus('Вычисляю карту…');
+      try {
+        if (state.imageLoaded !== index) {
+          const image = await json(`/api/image?index=${index}`);
+          if (serial !== state.serial) return;
+          $('base').src = image.image;
+          state.imageLoaded = index;
+        }
+        const view = await json(`/api/view?index=${index}&channel=${channel}&scale=${scale}`);
+        if (serial !== state.serial) return;
+        state.view = view;
+        $('heat').src = view.heatmap;
+        sizeStage(...view.size);
+        $('info').innerHTML = `<div><strong>${view.name}</strong></div>` +
+          `<div>Максимум: <strong>${view.max.toFixed(4)}</strong></div>` +
+          `<div>Порог видимости: ${view.threshold.toFixed(4)}</div>` +
+          `<div>Пики ≥ ${view.peak_floor.toFixed(4)}: ${view.peaks.length}${view.peaks.length === 30 ? '+' : ''}</div>` +
+          `<div>Главный пик: ${view.peaks.length ? `(${view.peaks[0].x}, ${view.peaks[0].y})` : 'нет'}</div>`;
+        setStatus('');
+      } catch (error) { if (serial === state.serial) setStatus(String(error)); }
+    }
+    function selectImage(delta) {
+      const select = $('imageSelect');
+      select.selectedIndex = Math.max(0, Math.min(select.options.length - 1, select.selectedIndex + delta));
+      select.dispatchEvent(new Event('change'));
+    }
+    $('imageSelect').addEventListener('change', () => {
+      const item = state.images.find(x => x.index === Number($('imageSelect').value));
+      $('channelSelect').value = item.region === 'spine' ? '2' : '21';
+      show();
+    });
+    $('channelSelect').addEventListener('change', show);
+    $('scaleSelect').addEventListener('change', show);
+    $('zoomSelect').addEventListener('change', () => state.view && sizeStage(...state.view.size));
+    $('opacity').addEventListener('input', updateAppearance);
+    $('showImage').addEventListener('change', updateAppearance);
+    $('showPeaks').addEventListener('change', updateAppearance);
+    $('prev').addEventListener('click', () => selectImage(-1));
+    $('next').addEventListener('click', () => selectImage(1));
+    (async () => {
+      try {
+        const data = await json('/api/items');
+        state.images = data.images; state.channels = data.channels;
+        const images = $('imageSelect');
+        for (const x of data.images) {
+          const option = document.createElement('option'); option.value = x.index;
+          option.textContent = `${x.region} · ${x.id} · ${x.size[1]}×${x.size[0]}`;
+          images.append(option);
+        }
+        const channels = $('channelSelect');
+        for (const region of ['spine', 'hip']) {
+          const group = document.createElement('optgroup');
+          group.label = region === 'spine' ? 'Позвоночник' : 'Бедро';
+          for (const x of data.channels.filter(c => c.region === region)) {
+            const option = document.createElement('option'); option.value = x.index;
+            option.textContent = `${x.index + 1}. ${x.name}`; group.append(option);
+          }
+          channels.append(group);
+        }
+        $('subtitle').textContent = `фолд 0 · ${data.images.length} кадров · ${data.device.toUpperCase()}`;
+        if (data.run_warning) {
+          $('runWarning').textContent = data.run_warning;
+          $('runWarning').style.display = 'block';
+        }
+        if (data.images.length) images.dispatchEvent(new Event('change'));
+      } catch (error) { setStatus(String(error)); }
+    })();
+  </script>
+</body>
+</html>

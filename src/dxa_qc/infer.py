@@ -18,7 +18,7 @@ from . import points as P
 from .dataset import normalize, pad_to_multiple
 from .heatmaps import decode, mask_outside
 from .model import KeypointNet
-from .structure import chain_decode
+from .structure import chain_decode, chain_decode_hypotheses
 
 # Каталог прогона по умолчанию — тот же, что train.out_dir в configs/keypoints.yaml.
 RUN_DIR = Path(__file__).resolve().parents[2] / "runs" / "keypoints"
@@ -39,7 +39,11 @@ class Predictor:
         self.device = torch.device(device)
         self.models, self.cfg, self.names = [], None, None
         for path in checkpoints:
-            ckpt = torch.load(path, map_location=self.device, weights_only=False)
+            numpy_types = [np._core.multiarray.scalar, np.dtype]
+            numpy_types += [type(np.dtype(name)) for name in
+                            ("float64", "int64", "str", "object", "bool")]
+            with torch.serialization.safe_globals(numpy_types):
+                ckpt = torch.load(path, map_location="cpu", weights_only=True)
             model = KeypointNet(len(ckpt["names"]),
                                 tuple(ckpt["config"]["model"]["decoder_channels"]),
                                 pretrained=False).to(self.device).eval()
@@ -86,14 +90,23 @@ class Predictor:
         region = max(self.regions, key=lambda r: float(np.sort(conf[self.regions[r]])[-3:].mean()))
         if chain is None:
             chain = self.cfg["infer"].get("spine_chain", True)
+        chain_info = None
         if region == "spine" and chain:
-            # центры L1–L4 — соседние позвонки, диски и края — на своём уровне
-            coords = chain_decode(h[0].cpu().numpy(), self.names, coords, visible, window)
+            maps = h[0].cpu().numpy()
+            if self.cfg["infer"].get("spine_chain_mode", "hypotheses") == "legacy":
+                coords = chain_decode(maps, self.names, coords, visible, window)
+            else:
+                coords, chain_info = chain_decode_hypotheses(
+                    maps, self.names, coords, visible, window,
+                    average=self.cfg["infer"].get("spine_chain_average", False),
+                    temperature=self.cfg["infer"].get("spine_chain_temperature", 1.0),
+                )
         return {
             "names": self.names,
             "coords": coords,                       # (C, 2) в координатах исходного снимка
             "confidence": conf,
             "visible": visible,
+            "chain_hypotheses": chain_info,
             "region": region if visible[self.regions[region]].any() else "out_of_scope",
         }
 

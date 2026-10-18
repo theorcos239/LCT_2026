@@ -29,6 +29,11 @@
 хранятся файл разметки `Processing/razmetka_all.html` и собранный из него
 `data/keypoints.npz`.
 
+Для дополнительной разметки фрагментов на iPad есть автономная страница и
+формат JSON: [CROP_ANNOTATOR.md](CROP_ANNOTATOR.md). Она сохраняет границы
+кропа в координатах исходного снимка и использует те же `image_id` и имена
+точек, что существующий набор.
+
 ```
 НД_для_обучения/
 ├── Исследования/<папка исследования>/…/*.dcm     снимки
@@ -166,6 +171,19 @@ PYTHONPATH=src python -m dxa_qc.pack \
 PYTHONPATH=src python -m dxa_qc.train --config configs/keypoints.yaml
 ```
 
+На Mac с Apple Silicon `--device auto` (значение по умолчанию) выбирает MPS,
+если он доступен в установленном PyTorch. Для явного выбора:
+
+```bash
+PYTHONPATH=src python -m dxa_qc.train --config configs/keypoints_crops.yaml --device mps
+PYTHONPATH=src python -m dxa_qc.evaluate --run runs/keypoints_crops --device mps
+```
+
+`--device xpu` предназначен для Intel GPU, `--device cuda` — для NVIDIA,
+`--device cpu` — для CPU. Явный выбор недоступного устройства завершится ошибкой;
+при `auto` порядок выбора: CUDA, MPS, XPU, CPU. Для проверки доступности на Mac:
+`python -c 'import torch; print(torch.backends.mps.is_available())'`.
+
 - Все гиперпараметры — в `configs/keypoints.yaml`, любой переопределяется из
   командной строки: `--set train.epochs=50 train.batch_size=8`. Копия
   итогового конфига сохраняется рядом с весами.
@@ -200,9 +218,11 @@ PYTHONPATH=src python -m dxa_qc.train --config configs/keypoints.yaml
   эксперта), `metrics_visibility.csv` (доля выдуманных и потерянных точек),
   `thresholds.csv` (пороги видимости).
 
-Честная оценка прогона — каждый фолд своими весами на своих отложенных
+OOF-оценка прогона — каждый фолд своими весами на своих отложенных
 кадрах, порог видимости подобран на остальных фолдах; `--calibrate`
-пересчитывает `thresholds.csv` без переобучения:
+пересчитывает `thresholds.csv` без переобучения. Лучшая эпоха пока выбрана по
+оцениваемому фолду, поэтому это не независимый внешний тест (подробнее в
+`docs/KEYPOINT_VALIDATION.md`):
 
 ```bash
 PYTHONPATH=src python -m dxa_qc.evaluate --run runs/keypoints --out runs/keypoints

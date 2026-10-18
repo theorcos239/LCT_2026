@@ -11,20 +11,23 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import math
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import ConcatDataset, DataLoader
 
 from . import config as cfgmod
+from . import crops as cropmod
 from . import evaluate as E
 from . import folds as foldsmod
 from . import metrics as M
 from . import pack as packmod
 from .dataset import KeypointDataset, TruncatedDataset
+from .device import select_device
 from .heatmaps import decode
 from .loss import focal_heatmap_loss
 from .model import KeypointNet
@@ -88,7 +91,8 @@ def predict(model, loader, device, window: int):
 
 
 def run_fold(cfg: dict, data: dict, fold: int, device: torch.device,
-             resume: bool = True, on_checkpoint=None, finalize: bool = False) -> dict:
+             resume: bool = True, on_checkpoint=None, finalize: bool = False,
+             crop_data: dict | None = None) -> dict:
     """on_checkpoint(fold, epoch, out_dir) вызывается после записи fold{N}_last.pt —
     например, чтобы скопировать чекпоинты на Диск.
 
@@ -105,7 +109,16 @@ def run_fold(cfg: dict, data: dict, fold: int, device: torch.device,
     common = dict(canvas=d["canvas"], sigma=cfg["heatmap"]["sigma"],
                   soft_mask_weight=cfg["loss"]["soft_mask_weight"],
                   use_clahe=d["use_clahe"], seed=cfg["seed"])
-    train_ds = KeypointDataset(data, train_idx, aug=AugmentConfig(**cfg["augment"]), **common)
+    base_train_ds = KeypointDataset(data, train_idx, aug=AugmentConfig(**cfg["augment"]), **common)
+    crop_train_ds = None
+    if crop_data is not None and len(crop_data["images"]):
+        # Фрагмент наследует study родителя. Отложенные исследования не входят
+        # даже в обучающие кропы; val/trunc ниже остаются только полными кадрами.
+        crop_idx = np.where(np.array([fold_of[str(s)] != fold for s in crop_data["studies"]]))[0]
+        if len(crop_idx):
+            crop_aug = AugmentConfig(**{**cfg["augment"], "p_crop": 0.0})
+            crop_train_ds = KeypointDataset(crop_data, crop_idx, aug=crop_aug, **common)
+    train_ds = ConcatDataset([base_train_ds, crop_train_ds]) if crop_train_ds else base_train_ds
     val_ds = KeypointDataset(data, val_idx, aug=AugmentConfig(enabled=False), **common)
     trunc_ds = TruncatedDataset(data, val_idx, cfg.get("eval", {}).get("crops_per_image", 6), **common)
     # persistent_workers: без него воркеры пересоздаются на каждой эпохе, и на
@@ -129,9 +142,24 @@ def run_fold(cfg: dict, data: dict, fold: int, device: torch.device,
     out_dir = Path(t["out_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
     best_path, last_path = out_dir / f"fold{fold}.pt", out_dir / f"fold{fold}_last.pt"
+    tail_path = out_dir / f"tail_fold{fold}.pt"  # не попадает в ансамбль fold*.pt
     history_path = out_dir / f"fold{fold}_history.csv"
 
+    init_dir = t.get("init_dir")
+    if init_dir and not finalize and not (resume and last_path.exists()):
+        init_path = Path(init_dir) / f"fold{fold}.pt"
+        saved_init = torch.load(init_path, map_location=device, weights_only=False)
+        if list(saved_init["names"]) != names:
+            raise ValueError(f"{init_path}: набор каналов не совпадает с текущим pack")
+        model.load_state_dict(saved_init["model"])
+        ema.shadow.load_state_dict(saved_init["model"])
+        print(f"fold {fold}: начальные веса из {init_path}")
+
     best = {"median_mm": math.inf, "epoch": -1, "state": None, "oof": None}
+    best_spine_p90 = math.inf
+    if resume and tail_path.exists():
+        tail_ckpt = torch.load(tail_path, map_location="cpu", weights_only=False)
+        best_spine_p90 = float(tail_ckpt.get("spine_p90_tta_mm", math.inf))
     history, start_epoch = [], 0
     if resume and last_path.exists():
         ckpt = torch.load(last_path, map_location=device, weights_only=False)
@@ -150,7 +178,9 @@ def run_fold(cfg: dict, data: dict, fold: int, device: torch.device,
         print(f"fold {fold}: обучение остановлено, берём лучшие веса эпохи {best['epoch']}")
     for epoch in range(start_epoch, t["epochs"] if not finalize else start_epoch):
         model.train()
-        train_ds.epoch = epoch
+        base_train_ds.epoch = epoch
+        if crop_train_ds is not None:
+            crop_train_ds.epoch = epoch
         for batch in train_dl:
             logits = model(batch["image"].to(device))
             loss = focal_heatmap_loss(logits, batch["target"].to(device),
@@ -165,18 +195,48 @@ def run_fold(cfg: dict, data: dict, fold: int, device: torch.device,
         oof = predict(ema.shadow, val_dl, device, cfg["heatmap"]["decode_window"])
         err = np.linalg.norm(oof["pred"] - oof["true"], axis=-1) * d["mm_per_px"]
         median = float(np.median(err[oof["visible"]])) if oof["visible"].any() else math.inf
-        row = {"epoch": epoch, "loss": float(loss), "median_mm": median}
+        p90 = float(np.percentile(err[oof["visible"]], 90)) if oof["visible"].any() else math.inf
+        spine_rows = np.asarray(data["regions"])[oof["index"]] == "spine"
+        spine_visible = oof["visible"] & spine_rows[:, None]
+        spine_p90 = (float(np.percentile(err[spine_visible], 90))
+                     if spine_visible.any() else math.inf)
+        row = {"epoch": epoch, "loss": loss.detach().item(), "median_mm": median,
+               "p90_mm_raw": p90, "spine_p90_mm_raw": spine_p90}
         if epoch % t.get("trunc_eval_every", 10) == 0 or epoch == t["epochs"] - 1:
             row.update(_visibility_at(predict(ema.shadow, trunc_dl, device,
                                               cfg["heatmap"]["decode_window"]), 0.5))
-        history.append(row)
-        pd.DataFrame(history).to_csv(history_path, index=False)
 
         if median < best["median_mm"]:
             best = {"median_mm": median, "epoch": epoch}
             save_atomic({"model": ema.shadow.state_dict(), "names": names, "config": cfg,
                          "fold": fold, "epoch": epoch, "median_mm": median}, best_path)
-        if epoch % t.get("checkpoint_every", 10) == 0 or epoch == t["epochs"] - 1:
+        checkpoint_now = epoch % t.get("checkpoint_every", 10) == 0 or epoch == t["epochs"] - 1
+        if checkpoint_now and spine_visible.any():
+            # Отбор по хвосту делаем на рабочем инференсе: одиночный проход и
+            # TTA + цепочка могут ранжировать эпохи в противоположном порядке.
+            predictor = E.Predictor([best_path], str(device))
+            predictor.models[0] = ema.shadow
+            tta_pred = np.stack([
+                predictor.predict(np.clip(np.asarray(data["images"][j]), 0, 255)
+                                  .astype(np.uint8), chain=True)["coords"]
+                for j in oof["index"]
+            ])
+            tta_err = np.linalg.norm(tta_pred - oof["true"], axis=-1) * d["mm_per_px"]
+            tta_p90 = float(np.percentile(tta_err[oof["visible"]], 90))
+            tta_spine_p90 = float(np.percentile(tta_err[spine_visible], 90))
+            row.update(p90_mm_tta=tta_p90, spine_p90_tta_mm=tta_spine_p90)
+            if tta_spine_p90 < best_spine_p90:
+                best_spine_p90 = tta_spine_p90
+                save_atomic({"model": ema.shadow.state_dict(), "names": names,
+                             "config": cfg, "fold": fold, "epoch": epoch,
+                             "median_mm": median, "p90_mm_raw": p90,
+                             "spine_p90_mm_raw": spine_p90,
+                             "p90_mm_tta": tta_p90,
+                             "spine_p90_tta_mm": tta_spine_p90}, tail_path)
+            del predictor
+        history.append(row)
+        pd.DataFrame(history).to_csv(history_path, index=False)
+        if checkpoint_now:
             save_atomic({"model": model.state_dict(), "ema": ema.shadow.state_dict(),
                          "optimizer": opt.state_dict(), "scheduler": sched.state_dict(),
                          "epoch": epoch, "history": history, "config": cfg, "fold": fold,
@@ -186,7 +246,12 @@ def run_fold(cfg: dict, data: dict, fold: int, device: torch.device,
                 on_checkpoint(fold, epoch, out_dir)
         if epoch - best["epoch"] >= t["patience"]:
             break
-        print(f"fold {fold} epoch {epoch:3d} loss {loss.item():.4f} median {median:.2f} мм")
+        print(f"fold {fold} epoch {epoch:3d} loss {loss.item():.4f} "
+              f"median {median:.2f} мм raw_p90 {p90:.2f} мм "
+              f"raw_spine_p90 {spine_p90:.2f} мм"
+              + (f" tta_p90 {row['p90_mm_tta']:.2f} мм"
+                 f" tta_spine_p90 {row['spine_p90_tta_mm']:.2f} мм"
+                 if "p90_mm_tta" in row else ""))
 
     # OOF считаем от сохранённых лучших весов: так результат не зависит от того,
     # был ли прогон продолжен после обрыва.
@@ -241,19 +306,37 @@ def save_predictions(data: dict, oof: dict, thresholds: pd.Series, out_dir: Path
 
 
 def train_all(cfg: dict, resume: bool = True, on_checkpoint=None,
-              finalize: bool = False) -> dict:
+              finalize: bool = False, device: str = "auto") -> dict:
     """Обучение по всем фолдам конфига. Возвращает OOF-предсказания, метрики и пороги.
 
     С resume=True продолжает прерванный прогон: готовые фолды пропускает, незаконченный
     поднимает с последнего чекпоинта. on_checkpoint(fold, epoch, out_dir) вызывается
     после каждой периодической записи — например, для копирования на Диск.
     """
+    cfg = copy.deepcopy(cfg)
+    crop_path = cfg["data"].get("crops")
+    if crop_path:
+        cfg["data"]["crops_sha256"] = hashlib.sha256(Path(crop_path).read_bytes()).hexdigest()
     set_seed(cfg["seed"], cfg["deterministic"])
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = select_device(device)
+    print(f"Устройство PyTorch: {device}")
     data = packmod.load(cfg["data"]["pack"])
+    crop_data = cropmod.load(crop_path, data) if crop_path else None
 
     out_dir = Path(cfg["train"]["out_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
+    config_path = out_dir / "config.yaml"
+    if crop_path and resume and config_path.exists():
+        previous = cfgmod.load(config_path)
+        if (previous.get("data", {}).get("crops") != crop_path or
+                previous.get("data", {}).get("crops_sha256") != cfg["data"]["crops_sha256"]):
+            raise ValueError(
+                f"{out_dir}: старый прогон использует другой JSON кропов. "
+                "Выберите новый train.out_dir или запустите с --no-resume."
+            )
+    if crop_data is not None:
+        print(f"Врачебные фрагменты: {len(crop_data['images'])} в pack, "
+              f"пропущено {crop_data['skipped_not_in_pack']} снимков вне pack")
     cfgmod.save(cfg, out_dir / "config.yaml")
 
     oof = {}
@@ -266,7 +349,7 @@ def train_all(cfg: dict, resume: bool = True, on_checkpoint=None,
             print(f"fold {fold}: не обучался, в прогон не входит")
         else:
             oof[fold] = run_fold(cfg, data, fold, device, resume, on_checkpoint,
-                                 finalize)["oof"]
+                                 finalize, crop_data)["oof"]
     # Пороги и метрики — по рабочему инференсу (Predictor: TTA, маска заполнения,
     # цепочка позвоночника), а не по одиночному проходу из run_fold: TTA снижает
     # высоту пиков, и порог одиночного прохода в сервисе терял видимые точки.
@@ -309,6 +392,8 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--config", default="configs/keypoints.yaml")
     p.add_argument("--set", nargs="*", default=[], dest="overrides")
+    p.add_argument("--device", choices=("auto", "cuda", "mps", "xpu", "cpu"),
+                   default="auto", help="устройство PyTorch (auto: CUDA, MPS, XPU, CPU)")
     p.add_argument("--no-resume", action="store_true",
                    help="начать заново, игнорируя чекпоинты в out_dir")
     p.add_argument("--finalize", action="store_true",
@@ -316,7 +401,7 @@ def main() -> None:
     a = p.parse_args()
 
     result = train_all(cfgmod.load(a.config, a.overrides), resume=not a.no_resume,
-                       finalize=a.finalize)
+                       finalize=a.finalize, device=a.device)
     pd.set_option("display.width", 200)
     print(result["per_point"].round(2).to_string(index=False))
     print(result["visibility"].round(3).to_string(index=False))

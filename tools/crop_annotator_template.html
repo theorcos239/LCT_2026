@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>DXA · разметка фрагментов</title>
+<style>
+:root{color-scheme:dark;--bg:#10151b;--panel:#1b242d;--line:#34424e;--text:#edf3f7;--muted:#a8b7c1;--blue:#63c9ff;--green:#52db99;--warn:#ffcc69}
+*{box-sizing:border-box}html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:16px/1.35 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}body{display:flex;flex-direction:column}
+button,select,input{font:inherit;color:inherit;background:#263440;border:1px solid #536878;border-radius:9px;min-height:44px;padding:8px 11px}
+button{cursor:pointer}button:disabled{opacity:.42;cursor:default}button.primary{background:#147eb3;border-color:#36b1ec;color:white;font-weight:700}button.good{background:#18734c;border-color:#45bb86;font-weight:700}button.danger{color:#ffaaaa}button.active{outline:2px solid var(--blue)}
+header{padding:10px max(12px,env(safe-area-inset-right));display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--panel);border-bottom:1px solid var(--line);flex:none}
+header h1{font-size:18px;margin:0 12px 0 0}header .grow{flex:1}#save-state{font-size:13px;color:var(--muted)}
+main{flex:1;display:grid;grid-template-columns:minmax(540px,1fr) minmax(310px,390px);min-height:0}
+.left{display:flex;flex-direction:column;min-width:0;min-height:0}.bar{display:flex;gap:8px;align-items:center;padding:8px;flex-wrap:wrap;background:#17212a;border-bottom:1px solid var(--line)}
+.bar select{max-width:400px;flex:1;min-width:150px}.bar input{max-width:160px}.bar .small{font-size:13px;color:var(--muted)}
+.viewer{flex:1;min-height:240px;background:#060a0d;position:relative;overflow:hidden}canvas{width:100%;height:100%;display:block;touch-action:none;cursor:crosshair}
+.hint{position:absolute;bottom:8px;left:8px;right:8px;pointer-events:none;font-size:13px;color:#d5e6ed;text-shadow:0 1px 3px black}
+.sidebar{background:var(--panel);border-left:1px solid var(--line);overflow:auto;padding:12px max(12px,env(safe-area-inset-right)) 20px;min-height:0}
+.sidebar h2{font-size:16px;margin:8px 0}.muted{color:var(--muted)}.small{font-size:13px}.stats{display:flex;gap:7px;flex-wrap:wrap;margin:9px 0}.pill{border:1px solid var(--line);border-radius:30px;padding:4px 9px;font-size:13px}
+.crop-list{display:flex;gap:6px;overflow:auto;padding:5px 0 8px}.crop-list button{white-space:nowrap;font-size:13px;min-height:38px}.controls{display:flex;gap:7px;flex-wrap:wrap;margin:9px 0}
+#bounds{font:14px ui-monospace,SFMono-Regular,monospace;color:var(--blue);padding:7px 0}.point-list{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding-bottom:20px}
+.point-list button{display:flex;align-items:center;gap:6px;text-align:left;min-height:42px;font-size:13px;padding:6px 8px}.point-list button.selected{background:#164b3a;border-color:var(--green)}.point-list button.outside{opacity:.55}.point-list button.absent{opacity:.4}.dot{width:10px;height:10px;border-radius:50%;border:1px solid currentColor;flex:none}.selected .dot{background:var(--green)}
+.notice{border:1px solid #4c5a62;border-radius:9px;padding:10px;margin:10px 0;background:#25313a;font-size:13px}.notice.warn{border-color:#9d7739;color:#ffe1a2}
+@media(max-width:850px){main{display:flex;flex-direction:column}.left{height:58%;flex:none}.sidebar{flex:1;border-left:0;border-top:1px solid var(--line)}header h1{width:100%;font-size:16px}.point-list{grid-template-columns:1fr 1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>DXA · фрагменты</h1>
+  <span id="save-state">Локально, без отправки данных</span><span class="grow"></span>
+  <button id="import-btn">Загрузить JSON</button><input id="import-file" type="file" accept=".json,application/json" hidden>
+  <button id="export-btn" class="good">Скачать JSON</button>
+</header>
+<main>
+  <section class="left">
+    <div class="bar">
+      <select id="region"><option value="all">Все области</option><option value="spine">Позвоночник</option><option value="hip">Бедро</option></select>
+      <input id="search" placeholder="Номер снимка" inputmode="numeric" aria-label="Номер снимка">
+      <button id="prev" aria-label="Предыдущий">←</button><select id="image-select" aria-label="Снимок"></select><button id="next" aria-label="Следующий">→</button>
+      <button id="zoom-out" aria-label="Уменьшить">−</button><span id="zoom-label" class="small"></span><button id="zoom-in" aria-label="Увеличить">＋</button><button id="zoom-fit">По размеру</button>
+    </div>
+    <div class="viewer"><canvas id="canvas"></canvas><div class="hint">«Новая рамка» → проведите пальцем по снимку. Углы и рамку можно перетаскивать. Точку можно отметить на снимке или в списке.</div></div>
+  </section>
+  <aside class="sidebar">
+    <h2 id="image-title">Снимок</h2><div id="image-meta" class="muted small"></div>
+    <div class="controls"><button id="new-crop" class="primary">＋ Новая рамка</button><button id="delete-crop" class="danger">Удалить рамку</button></div>
+    <div id="crop-list" class="crop-list"></div>
+    <div id="bounds">Выберите рамку</div>
+    <div class="controls"><button id="confirm-crop" class="good">Подтвердить фрагмент</button></div>
+    <div id="notice" class="notice">Каждая рамка сохраняется отдельно. Отмечайте точки, которые врач считает видимыми внутри неё.</div>
+    <h2>Точки внутри рамки <span id="point-count" class="small muted"></span></h2>
+    <div id="point-list" class="point-list"></div>
+  </aside>
+</main>
+<script id="dxa-payload" type="application/json">__DXA_PAYLOAD__</script>
+<script>
+"use strict";
+const DATA=JSON.parse(document.getElementById("dxa-payload").textContent);
+const IMAGES=DATA.images, BY_ID=Object.fromEntries(IMAGES.map(x=>[x.id,x]));
+const KEY="dxa-crops-v1:"+DATA.source.annotations;
+const $=id=>document.getElementById(id);
+let crops=[], currentImage=IMAGES[0].id, currentCrop=null, mode="select", drag=null, zoom=1;
+let view={scale:1,x:0,y:0,w:0,h:0}, loaded=new Map(), saved="";
+const canvas=$("canvas"), ctx=canvas.getContext("2d");
+function uid(){return "crop-"+Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,8)}
+function ann(){return DATA.annotations[currentImage]||{points:{},absent:[]}}
+function image(){return BY_ID[currentImage]}
+function crop(){return crops.find(x=>x.id===currentCrop)||null}
+function regionLabels(){return DATA.schema.regions[image().region].labels}
+function clamp(v,a,b){return Math.min(b,Math.max(a,v))}
+function fmt(v){return Math.round(v*1000)/1000}
+function inBox(p,b){return p.x>=b.x0&&p.x<b.x1&&p.y>=b.y0&&p.y<b.y1}
+function saneBox(b,im){
+ const x0=clamp(Math.floor(Math.min(b.x0,b.x1)),0,im.w),x1=clamp(Math.ceil(Math.max(b.x0,b.x1)),0,im.w);
+ const y0=clamp(Math.floor(Math.min(b.y0,b.y1)),0,im.h),y1=clamp(Math.ceil(Math.max(b.y0,b.y1)),0,im.h);
+ return {x0,y0,x1,y1};
+}
+function validCrop(c){
+ const im=BY_ID[c.image_id];if(!im)return false;
+ const b=c.box;if(!b||![b.x0,b.y0,b.x1,b.y1].every(Number.isInteger))return false;
+ if(b.x0<0||b.y0<0||b.x1>im.w||b.y1>im.h||b.x1-b.x0<8||b.y1-b.y0<8)return false;
+ const a=DATA.annotations[c.image_id],allowed=new Set(DATA.schema.regions[im.region].labels.map(x=>x.name));
+ return Array.isArray(c.included_points)&&c.included_points.every(n=>allowed.has(n)&&a.points[n]&&inBox(a.points[n],b));
+}
+function save(){
+ try{localStorage.setItem(KEY,JSON.stringify(crops));saved="Сохранено на этом iPad"}
+ catch(e){saved="Автосохранение недоступно — скачайте JSON"}
+ $("save-state").textContent=saved;
+}
+function paintStatus(){const c=crop();$("confirm-crop").disabled=!c;$("delete-crop").disabled=!c;
+ $("confirm-crop").textContent=c&&c.status==="confirmed"?"✓ Подтверждено":"Подтвердить фрагмент";
+ $("bounds").textContent=c?`Рамка: [${c.box.x0}, ${c.box.y0}, ${c.box.x1}, ${c.box.y1}] · ${c.box.x1-c.box.x0}×${c.box.y1-c.box.y0} px`:"Выберите рамку";
+ $("point-count").textContent=c?`(${c.included_points.length} выбрано)`:"";
+ const n=$("notice");n.classList.toggle("warn",!!c&&c.status!=="confirmed");
+ n.textContent=c?(c.status==="confirmed"?"Фрагмент подтверждён. Изменение рамки или точек вернёт его в черновики.":"Отметьте видимые точки внутри рамки и подтвердите фрагмент."):"Рамки добавляются к текущему снимку; исходная разметка остаётся без изменений.";
+}
+function renderCropList(){const box=$("crop-list");box.replaceChildren();
+ crops.filter(x=>x.image_id===currentImage).forEach((c,i)=>{let b=document.createElement("button");b.textContent=`${c.status==="confirmed"?"✓ ":"○ "}Фрагмент ${i+1}`;b.classList.toggle("active",c.id===currentCrop);b.onclick=()=>{currentCrop=c.id;mode="select";render()};box.append(b)});
+}
+function renderPoints(){const holder=$("point-list");holder.replaceChildren();const c=crop(),a=ann();
+ for(const l of regionLabels()){
+  const p=a.points[l.name],inside=!!c&&!!p&&inBox(p,c.box),selected=!!c&&c.included_points.includes(l.name);
+  const b=document.createElement("button");b.type="button";b.className=selected?"selected":(!inside?(p?"outside":"absent"):"");b.disabled=!inside;
+  const d=document.createElement("span");d.className="dot";b.append(d,document.createTextNode(l.title+(p?"":" · нет точки")));
+  b.title=p?(inside?"Нажмите, чтобы отметить или снять точку":"Координата за рамкой"):"В исходной разметке нет координаты";
+  b.onclick=()=>togglePoint(l.name);holder.append(b);
+ }
+}
+function render(){const im=image(),a=ann();$("image-title").textContent=`Снимок ${IMAGES.indexOf(im)+1} / ${IMAGES.length}`;
+ $("image-meta").textContent=`${im.region==="spine"?"Позвоночник":"Бедро"} · ${im.w}×${im.h} px · ID ${im.id} · исходных точек ${Object.keys(a.points).length}`;
+ renderCropList();renderPoints();paintStatus();draw();
+}
+function markChanged(c){c.status="draft";c.updated_at=new Date().toISOString();save()}
+function togglePoint(name){const c=crop(),p=ann().points[name];if(!c||!p||!inBox(p,c.box))return;
+ const s=new Set(c.included_points);s.has(name)?s.delete(name):s.add(name);c.included_points=regionLabels().map(x=>x.name).filter(x=>s.has(x));markChanged(c);render()}
+function setBox(c,b){c.box=saneBox(b,image());c.included_points=c.included_points.filter(n=>{const p=ann().points[n];return p&&inBox(p,c.box)});markChanged(c);render()}
+function loadImage(im){if(loaded.has(im.id))return loaded.get(im.id);const pic=new Image();pic.src=im.src;pic.onload=draw;loaded.set(im.id,pic);return pic}
+function resize(){const r=canvas.getBoundingClientRect(),d=window.devicePixelRatio||1;canvas.width=Math.round(r.width*d);canvas.height=Math.round(r.height*d);draw()}
+new ResizeObserver(resize).observe(canvas);
+function geometry(){const im=image(),d=window.devicePixelRatio||1,W=canvas.width,H=canvas.height;
+ const fit=Math.min((W-20*d)/im.w,(H-20*d)/im.h);view.scale=fit*zoom;view.w=im.w*view.scale;view.h=im.h*view.scale;view.x=(W-view.w)/2;view.y=(H-view.h)/2;
+}
+function toCanvas(p){return {x:view.x+p.x*view.scale,y:view.y+p.y*view.scale}}
+function fromEvent(e){const r=canvas.getBoundingClientRect(),d=window.devicePixelRatio||1;return {x:((e.clientX-r.left)*d-view.x)/view.scale,y:((e.clientY-r.top)*d-view.y)/view.scale}}
+function imagePoint(p){return{x:clamp(p.x,0,image().w),y:clamp(p.y,0,image().h)}}
+function draw(){if(!canvas.width||!canvas.height)return;geometry();ctx.clearRect(0,0,canvas.width,canvas.height);
+ const im=image(),pic=loadImage(im);if(pic.complete&&pic.naturalWidth)ctx.drawImage(pic,view.x,view.y,view.w,view.h);
+ const c=crop(),b=drag&&drag.kind==="new"?saneBox({x0:drag.start.x,y0:drag.start.y,x1:drag.now.x,y1:drag.now.y},im):c?.box;
+ if(b){const p=toCanvas({x:b.x0,y:b.y0}),q=toCanvas({x:b.x1,y:b.y1});ctx.save();ctx.fillStyle="rgba(0,0,0,.43)";
+  ctx.fillRect(view.x,view.y,view.w,p.y-view.y);ctx.fillRect(view.x,q.y,view.w,view.y+view.h-q.y);
+  ctx.fillRect(view.x,p.y,p.x-view.x,q.y-p.y);ctx.fillRect(q.x,p.y,view.x+view.w-q.x,q.y-p.y);
+  ctx.fillStyle="rgba(92,203,255,.06)";ctx.fillRect(p.x,p.y,q.x-p.x,q.y-p.y);
+  ctx.strokeStyle="#63c9ff";ctx.lineWidth=3*(window.devicePixelRatio||1);ctx.strokeRect(p.x,p.y,q.x-p.x,q.y-p.y);
+  for(const v of [{x:p.x,y:p.y},{x:q.x,y:p.y},{x:p.x,y:q.y},{x:q.x,y:q.y}]){ctx.fillStyle="#e5f8ff";ctx.fillRect(v.x-6,v.y-6,12,12)}ctx.restore();
+ }
+ const points=ann().points;ctx.font=`${13*(window.devicePixelRatio||1)}px sans-serif`;
+ for(const l of regionLabels()){const v=points[l.name];if(!v)continue;const p=toCanvas(v),inside=!!b&&inBox(v,b),yes=!!c&&c.included_points.includes(l.name);
+  ctx.beginPath();ctx.arc(p.x,p.y,6*(window.devicePixelRatio||1),0,Math.PI*2);ctx.fillStyle=yes?"#52db99":inside?"#ffcd68":"#9ba8b1";ctx.fill();ctx.strokeStyle="#10202a";ctx.lineWidth=2;ctx.stroke();
+  if(inside){ctx.fillStyle=yes?"#a5f8c9":"#ffe0a0";ctx.fillText(l.name,p.x+9,p.y-7)}
+ }
+ $("zoom-label").textContent=`${Math.round(zoom*100)}%`;
+}
+function hitPoint(p){const b=crop()?.box;if(!b)return null;let best=null,dist=18*(window.devicePixelRatio||1)/view.scale;
+ for(const l of regionLabels()){const v=ann().points[l.name];if(!v||!inBox(v,b))continue;const d=Math.hypot(p.x-v.x,p.y-v.y);if(d<dist){best=l.name;dist=d}}return best}
+function hitDrag(p,b){const radius=20*(window.devicePixelRatio||1)/view.scale;
+ for(const [name,x,y] of [["tl",b.x0,b.y0],["tr",b.x1,b.y0],["bl",b.x0,b.y1],["br",b.x1,b.y1]])if(Math.hypot(p.x-x,p.y-y)<radius)return name;
+ return inBox(p,b)?"move":null}
+canvas.addEventListener("pointerdown",e=>{if(!image())return;canvas.setPointerCapture(e.pointerId);const p=imagePoint(fromEvent(e));
+ if(mode==="new"){drag={kind:"new",start:p,now:p};draw();return}
+ const name=hitPoint(p);if(name){drag={kind:"point",name,start:p};return}
+ const c=crop(),hit=c&&hitDrag(p,c.box);if(hit)drag={kind:hit,start:p,original:{...c.box}};
+});
+canvas.addEventListener("pointermove",e=>{if(!drag)return;const p=imagePoint(fromEvent(e));
+ if(drag.kind==="new"){drag.now=p;draw();return}
+ if(drag.kind==="point")return;
+ const c=crop(),o=drag.original,dx=Math.round(p.x-drag.start.x),dy=Math.round(p.y-drag.start.y);if(!c)return;
+ let b={...o};if(drag.kind==="move"){
+  const x0=clamp(o.x0+dx,0,image().w-(o.x1-o.x0)),y0=clamp(o.y0+dy,0,image().h-(o.y1-o.y0));b={x0,y0,x1:x0+o.x1-o.x0,y1:y0+o.y1-o.y0};
+ }else{if(drag.kind.includes("l"))b.x0=clamp(o.x0+dx,0,o.x1-8);if(drag.kind.includes("r"))b.x1=clamp(o.x1+dx,o.x0+8,image().w);
+  if(drag.kind.includes("t"))b.y0=clamp(o.y0+dy,0,o.y1-8);if(drag.kind.includes("b"))b.y1=clamp(o.y1+dy,o.y0+8,image().h)}
+ c.box=saneBox(b,image());draw();
+});
+function endDrag(e){if(!drag)return;const d=drag;drag=null;
+ if(d.kind==="point"){togglePoint(d.name);return}
+ if(d.kind==="new"){
+  const b=saneBox({x0:d.start.x,y0:d.start.y,x1:d.now.x,y1:d.now.y},image());
+  if(b.x1-b.x0>=8&&b.y1-b.y0>=8){const c={id:uid(),image_id:currentImage,region:image().region,box:b,included_points:[],status:"draft",updated_at:new Date().toISOString()};crops.push(c);currentCrop=c.id;save()}
+  mode="select";render();return;
+ }
+ const c=crop();if(c){setBox(c,c.box)}else render();
+}
+canvas.addEventListener("pointerup",endDrag);canvas.addEventListener("pointercancel",endDrag);
+function listImages(){const reg=$("region").value,q=$("search").value.trim();const sel=$("image-select");sel.replaceChildren();
+ IMAGES.forEach((im,i)=>{if(reg!=="all"&&im.region!==reg)return;if(q&&!String(i+1).includes(q)&&!im.id.includes(q))return;
+  const opt=document.createElement("option");opt.value=im.id;opt.textContent=`${i+1}. ${im.region==="spine"?"Позвоночник":"Бедро"} · ${im.id} · ${crops.filter(c=>c.image_id===im.id).length} кроп`;sel.append(opt)});
+ if(!sel.options.length){sel.add(new Option("Нет снимков", ""));return}
+ if(![...sel.options].some(o=>o.value===currentImage))currentImage=sel.options[0].value;
+ sel.value=currentImage;currentCrop=crops.find(c=>c.image_id===currentImage)?.id||null;render();
+}
+function selectImage(id){currentImage=id;currentCrop=crops.find(c=>c.image_id===id)?.id||null;$("image-select").value=id;mode="select";zoom=1;render()}
+$("region").onchange=listImages;$("search").oninput=listImages;$("image-select").onchange=e=>selectImage(e.target.value);
+function step(n){const s=$("image-select"),i=s.selectedIndex+n;if(i>=0&&i<s.options.length)selectImage(s.options[i].value)}
+$("prev").onclick=()=>step(-1);$("next").onclick=()=>step(1);
+$("zoom-in").onclick=()=>{zoom=clamp(zoom*1.25,1,5);draw()};$("zoom-out").onclick=()=>{zoom=clamp(zoom/1.25,1,5);draw()};$("zoom-fit").onclick=()=>{zoom=1;draw()};
+$("new-crop").onclick=()=>{mode="new";$("notice").textContent="Проведите пальцем по нужной области снимка."};
+$("delete-crop").onclick=()=>{const c=crop();if(!c)return;if(!confirm("Удалить выбранный фрагмент?"))return;crops=crops.filter(x=>x.id!==c.id);currentCrop=crops.find(x=>x.image_id===currentImage)?.id||null;save();listImages()};
+$("confirm-crop").onclick=()=>{const c=crop();if(!c)return;if(!validCrop(c)){alert("Проверьте границы рамки и выбранные точки.");return}
+ if(!c.included_points.length){alert("Отметьте хотя бы одну точку внутри рамки.");return}c.status="confirmed";c.updated_at=new Date().toISOString();save();render()};
+function exportData(){const out={format:"dxa-crops-v1",schema_version:1,source:DATA.source,saved_at:new Date().toISOString(),coordinate_system:"original_image_pixels; box is [x0,y0,x1,y1), x1/y1 exclusive",crops:crops.map(c=>{
+ const a=DATA.annotations[c.image_id],im=BY_ID[c.image_id];return {...c,image_size:{w:im.w,h:im.h},points_crop:Object.fromEntries(c.included_points.map(n=>[n,{x:fmt(a.points[n].x-c.box.x0),y:fmt(a.points[n].y-c.box.y0)}]))}
+ })};
+ const blob=new Blob([JSON.stringify(out,null,2)],{type:"application/json"}),url=URL.createObjectURL(blob),link=document.createElement("a");
+ link.href=url;link.download=`dxa-crops-${new Date().toISOString().slice(0,10)}.json`;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
+}
+$("export-btn").onclick=exportData;
+$("import-btn").onclick=()=>$("import-file").click();
+$("import-file").onchange=async e=>{const f=e.target.files[0];if(!f)return;try{const d=JSON.parse(await f.text());if(d.format!=="dxa-crops-v1"||!Array.isArray(d.crops))throw Error("Это не экспорт dxa-crops-v1");
+ const valid=d.crops.filter(validCrop);if(valid.length!==d.crops.length)throw Error("В файле есть неверные рамки или точки");
+ if(crops.length&&!confirm("Заменить текущие фрагменты содержимым JSON?"))return;
+ crops=valid.map(c=>({id:c.id,image_id:c.image_id,region:BY_ID[c.image_id].region,box:c.box,included_points:c.included_points,status:c.status==="confirmed"?"confirmed":"draft",updated_at:c.updated_at||null}));
+ currentCrop=null;save();listImages();alert(`Загружено фрагментов: ${crops.length}`)}catch(err){alert("Не удалось загрузить JSON: "+err.message)}finally{e.target.value=""}};
+try{const old=JSON.parse(localStorage.getItem(KEY)||"[]");if(Array.isArray(old))crops=old.filter(validCrop)}catch(e){}
+listImages();save();
+</script>
+</body>
+</html>

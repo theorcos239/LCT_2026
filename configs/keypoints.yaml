@@ -3,6 +3,7 @@ deterministic: true
 
 data:
   pack: data/keypoints.npz            # собирается python -m dxa_qc.pack
+  crops: null                         # путь к JSON dxa-crops-v1; только дополнительные обучающие примеры
   folds: folds.csv
   points: full                        # full: 29 каналов | core: 21 (без боковых краёв) | minimal: 14 (только те, что входят в критерии)
   canvas: [352, 320]                  # покрывает все обучающие снимки (максимум 349×300)
@@ -56,6 +57,7 @@ train:
   ema_decay: 0.999
   amp: false                          # титаны могут быть Pascal
   out_dir: runs/keypoints
+  init_dir: null                      # для короткого дообучения: прежние fold{N}.pt
 
 infer:
   visibility_threshold: 0.5           # если отсутствующих примеров точки мало для калибровки
@@ -63,6 +65,9 @@ infer:
   tta_rotations: [-5, 0, 5]
   tta_flip_spine: true                # с обратной перестановкой каналов
   spine_chain: true                   # центры L1–L4 — соседние позвонки (structure.py)
+  spine_chain_mode: hypotheses        # несколько пиков, 21 отклик, геометрия и диски
+  spine_chain_average: false          # softmax-веса — диагностика; MAP сохраняет дискретный уровень
+  spine_chain_temperature: 1.0        # температура относительных весов пяти лучших цепочек
 
 eval:
   crops_per_image: 6                  # обрезанных вариантов отложенного кадра: видимость известна точно

@@ -28,6 +28,8 @@ from itertools import combinations
 import numpy as np
 from scipy.ndimage import maximum_filter
 
+from .points import SPINE_CORE, SPINE_EDGES
+
 CENTERS = [f"l{i}_center" for i in range(1, 5)]
 
 # Полосы вдоль оси цепочки в долях шага, от центра L{k} (k — индекс 0..3).
@@ -81,6 +83,133 @@ def _soft_argmax(h: np.ndarray, x: float, y: float, window: int) -> np.ndarray:
     if s <= 1e-6:
         return np.array([x, y])
     return np.array([(p.sum(0) * xs).sum() / s, (p.sum(1) * ys).sum() / s])
+
+
+def _candidate_peaks(h: np.ndarray, top_k: int = 6) -> list[tuple[np.ndarray, float]]:
+    """Сильные локальные пики; относительный пол нужен для слабых TTA-карт."""
+    floor = min(0.02, max(0.001, float(h.max()) * 0.1))
+    points, values = _local_maxima(h, floor, radius=4, top_k=30)
+    result = []
+    for point, value in zip(points, values):
+        if all(np.linalg.norm(point - other) > 8 for other, _ in result):
+            result.append((point, float(value)))
+            if len(result) == top_k:
+                break
+    return result
+
+
+def _disc_evidence(chain: np.ndarray, peaks: list[list[tuple[np.ndarray, float]]]) -> float:
+    """Поддержка пяти дисков в полосах между центрами цепочки."""
+    bands = ((0, -1., 0.), (0, 0., 1.), (1, 0., 1.),
+             (2, 0., 1.), (3, 0., 1.))
+    step = (chain[-1] - chain[0]) / 3
+    length = float(np.linalg.norm(step))
+    if length < 1:
+        return -100.0
+    score = 0.0
+    for (k, low, high), choices in zip(bands, peaks):
+        best = 1e-4
+        for point, value in choices:
+            d = point - chain[k]
+            along = float(d @ step) / length**2
+            across = abs(float(d[0] * step[1] - d[1] * step[0])) / length
+            if low <= along <= high and across <= length:
+                best = max(best, value)
+        score += np.log(best)
+    return float(score)
+
+
+def chain_hypotheses(prob: np.ndarray, names: list[str], top_k: int = 5,
+                     spacing_weight: float = 10.0, disc_weight: float = 0.5
+                     ) -> list[tuple[float, np.ndarray]]:
+    """Лучшие цепочки L1–L4: 21 отклик в каждом кандидате + геометрия + диски.
+
+    Баллы относительны только внутри одного снимка. Варианты рассматриваются
+    при полной видимости L1–L4; проверка видимости остаётся у вызывающего кода.
+    """
+    index = {name: i for i, name in enumerate(names)}
+    discs = ("disc_th12_l1", "disc_l1_l2", "disc_l2_l3",
+             "disc_l3_l4", "disc_l4_l5")
+    # У набора core тоже 21 выход, но восемь последних относятся к бедру.
+    # Нормировать по ним отклики позвонков нельзя.
+    if (prob.ndim != 3 or prob.shape[0] < 21 or
+            names[:21] != SPINE_CORE + SPINE_EDGES or
+            not all(n in index for n in (*CENTERS, *discs))):
+        return []
+    centers = [index[n] for n in CENTERS]
+    hits = sorted((hit for c in centers for hit in _candidate_peaks(prob[c])),
+                  key=lambda hit: hit[1], reverse=True)
+    pool = []
+    for point, _ in hits:
+        if all(np.linalg.norm(point - other) > 8 for other in pool):
+            pool.append(point)
+    pool = np.array(sorted(pool, key=lambda p: p[1])).reshape(-1, 2)
+    if len(pool) < 4:
+        return []
+
+    # Каждый кандидат имеет 21 отклик; нормировка эквивалентна softmax(log H).
+    support = np.empty((len(pool), 21), dtype=float)
+    height, width = prob.shape[1:]
+    for i, (x, y) in enumerate(pool.astype(int)):
+        support[i] = prob[:21, max(0, y - 2):min(height, y + 3),
+                          max(0, x - 2):min(width, x + 3)].max(axis=(1, 2))
+    support = np.maximum(support, 1e-4)
+    raw = np.log(support[:, centers])
+    normalized = raw - np.log(support.sum(axis=1, keepdims=True))
+
+    proposals = []
+    for combo in combinations(range(len(pool)), 4):
+        chain = pool[list(combo)]
+        steps = np.diff(chain, axis=0)
+        mean = steps.mean(axis=0)
+        length = float(np.linalg.norm(mean))
+        if not (25 <= length <= 110 and mean[1] > 0):
+            continue
+        uneven = float(np.square(steps - mean).sum() / length**2)
+        raw_score = float(sum(raw[i, k] for k, i in enumerate(combo))
+                          - spacing_weight * uneven)
+        normalized_score = float(sum(normalized[i, k] for k, i in enumerate(combo))
+                                 - spacing_weight * uneven)
+        proposals.append((combo, raw_score, normalized_score))
+    if not proposals:
+        return []
+
+    # Диски оцениваем на объединении 100 лучших сырых и нормированных цепочек.
+    shortlist = set()
+    for field in (1, 2):
+        shortlist.update(row[0] for row in sorted(proposals,
+                                                  key=lambda row: row[field],
+                                                  reverse=True)[:100])
+    disc_peaks = [_candidate_peaks(prob[index[name]]) for name in discs]
+    scored = [(row[2] + disc_weight * _disc_evidence(pool[list(row[0])], disc_peaks),
+               pool[list(row[0])]) for row in proposals if row[0] in shortlist]
+    scored.sort(key=lambda row: row[0], reverse=True)
+    return scored[:top_k]
+
+
+def _align_dependent(prob: np.ndarray, names: list[str], out: np.ndarray,
+                     chain: np.ndarray, active: np.ndarray, window: int,
+                     min_value: float) -> np.ndarray:
+    """Вернуть диски и края в полосы выбранной цепочки."""
+    step = (chain[-1] - chain[0]) / 3
+    s2 = float(step @ step)
+    if s2 < 1:
+        return out
+    hh, ww = prob.shape[1:]
+    yy, xx = np.mgrid[0:hh, 0:ww]
+    for c, (k, t0, t1) in _bands(names).items():
+        if not active[c]:
+            continue
+        t = float((out[c] - chain[k]) @ step) / s2
+        if t0 <= t <= t1:
+            continue
+        tmap = ((xx - chain[k][0]) * step[0] + (yy - chain[k][1]) * step[1]) / s2
+        h = np.where((tmap >= t0) & (tmap <= t1), prob[c], 0.0)
+        if h.max() < min_value:
+            continue
+        y, x = np.unravel_index(h.argmax(), h.shape)
+        out[c] = _soft_argmax(h, float(x), float(y), window)
+    return out
 
 
 def chain_decode(prob: np.ndarray, names: list[str], coords: np.ndarray, active: np.ndarray,
@@ -148,20 +277,49 @@ def chain_decode(prob: np.ndarray, names: list[str], coords: np.ndarray, active:
         if np.isnan(chain[k, 0]):
             chain[k] = chain[known[0]] + (k - known[0]) * step
 
-    # 3. зависимые точки — в полосе своего уровня
-    s2 = float(step @ step)
-    hh, ww = prob.shape[1:]
-    yy, xx = np.mgrid[0:hh, 0:ww]
-    for c, (k, t0, t1) in _bands(names).items():
-        if not active[c]:
-            continue
-        t = float((out[c] - chain[k]) @ step) / s2
-        if t0 <= t <= t1:
-            continue
-        tmap = ((xx - chain[k][0]) * step[0] + (yy - chain[k][1]) * step[1]) / s2
-        h = np.where((tmap >= t0) & (tmap <= t1), prob[c], 0.0)
-        if h.max() < min_value:
-            continue
-        y, x = np.unravel_index(h.argmax(), h.shape)
-        out[c] = _soft_argmax(h, float(x), float(y), window)
-    return out
+    return _align_dependent(prob, names, out, chain, active, window, min_value)
+
+
+def chain_decode_hypotheses(prob: np.ndarray, names: list[str], coords: np.ndarray,
+                            active: np.ndarray, window: int = 11,
+                            average: bool = False, temperature: float = 1.0
+                            ) -> tuple[np.ndarray, dict]:
+    """Согласовать L1–L4 по нескольким гипотезам; вернуть относительный вес лидера.
+
+    При частично видимой цепочке используется прежний декодер, чтобы не
+    выдумывать отсутствующие в обрезанном кадре позвонки. Усреднение является
+    исследовательской опцией: оно может поставить точку между двумя уровнями.
+    """
+    index = {name: i for i, name in enumerate(names)}
+    if not all(name in index for name in CENTERS):
+        return coords, {"used": False, "reason": "missing_channels"}
+    center_cols = [index[name] for name in CENTERS]
+    if not np.asarray(active)[center_cols].all():
+        return chain_decode(prob, names, coords, active, window), {
+            "used": False, "reason": "partial_visibility"}
+    ranked = chain_hypotheses(prob, names)
+    if not ranked:
+        return chain_decode(prob, names, coords, active, window), {
+            "used": False, "reason": "no_chain"}
+
+    scores = np.array([score for score, _ in ranked])
+    temperature = max(float(temperature), 1e-6)
+    weights = np.exp((scores - scores.max()) / temperature)
+    weights /= weights.sum()
+    if average:
+        centers = sum(w * chain for w, (_, chain) in zip(weights, ranked))
+    else:
+        centers = np.array([_soft_argmax(prob[c], *point, window)
+                            for c, point in zip(center_cols, ranked[0][1])])
+    out = coords.copy()
+    for c, p in zip(center_cols, centers):
+        out[c] = p
+    out = _align_dependent(prob, names, out, centers, active, window,
+                           min_value=min(.02, max(.001, float(prob[center_cols].max()) * .1)))
+    return out, {
+        "used": True,
+        "n_hypotheses": len(ranked),
+        "top1_relative_weight": float(weights[0]),
+        "score_gap_top2": float(scores[0] - scores[1]) if len(scores) > 1 else None,
+        "averaged": bool(average),
+    }

@@ -1,4 +1,4 @@
-"""Честная оценка и калибровка модели точек на рабочем конвейере инференса.
+"""OOF-оценка и калибровка модели точек на рабочем конвейере инференса.
 
 Каждый фолд оценивается своими весами только на своих отложенных кадрах —
 исходных и обрезанных (TruncatedDataset: край отрезан, часто вплотную к
@@ -15,6 +15,10 @@
 предсказаниям. Оценка видимости идёт с перекрёстными порогами: подобранными
 на остальных фолдах и применёнными к этому, — иначе она подсматривает в ответ.
 
+Пороги для оценки уровня и координат берутся с других фолдов. Но лучшая эпоха
+каждого foldN.pt выбрана по этому же отложенному фолду при обучении. Поэтому
+это исследовательская OOF-оценка, а не полностью независимый внешний тест.
+
 Печатает: локализацию (мм) с цепочкой позвоночника и без, ошибки уровня
 позвонка, сквозные величины (угол оси, отступы ROI, выступ малого вертела),
 долю выдуманных и потерянных точек.
@@ -28,10 +32,10 @@ import numpy as np
 import pandas as pd
 import torch
 
-from . import folds as foldsmod
 from . import metrics as M
 from . import pack as packmod
 from .dataset import TruncatedDataset
+from .device import select_device
 from .infer import Predictor, fold_checkpoints
 from .pack import ABSENT, LABELED
 from .transforms import inside_frame
@@ -71,28 +75,35 @@ def predict_frames(predictor: Predictor, frames: list, chain: bool = True) -> di
 
 def fold_oof(run_dir: str | Path, data: dict, device: torch.device | str,
              crops: int = 6, folds: list[int] | None = None,
-             thresholds: np.ndarray | None = None) -> list[dict]:
+             thresholds: np.ndarray | dict[int, np.ndarray] | None = None) -> list[dict]:
     """По каждому фолду — предсказания рабочего инференса на его отложенных кадрах.
 
     orig — исходные кадры, orig_indep — они же без цепочки позвоночника,
-    trunc — обрезанные. thresholds — пороги видимости вместо thresholds.csv
-    прогона (они решают, какие центры позвонков идут в цепочку).
+    trunc — обрезанные. thresholds — общие или отдельные для каждого фолда
+    пороги видимости вместо thresholds.csv; они решают, какие центры идут в цепочку.
     """
+    from . import folds as foldsmod
+
     studies = np.array(data["studies"])
     result = []
     for path in fold_checkpoints(run_dir, folds):
+        fold = int(path.stem.removeprefix("fold"))
         predictor = Predictor([path], str(device))
         if thresholds is not None:
-            predictor.thresholds = np.asarray(thresholds, float)
-        cfg, fold = predictor.cfg, int(path.stem.removeprefix("fold"))
+            predictor.thresholds = np.asarray(
+                thresholds[fold] if isinstance(thresholds, dict) else thresholds, float)
+        cfg = predictor.cfg
         split = foldsmod.load(cfg["data"]["folds"], set(map(str, studies)))
         fold_of = dict(zip(split.study, split.fold))
         val_idx = np.flatnonzero([fold_of.get(s, -1) == fold for s in studies])
         orig, trunc = fold_frames(data, val_idx, crops)
-        result.append({"fold": fold,
+        result.append({"fold": fold, "config": cfg,
+                       "thresholds": predictor.thresholds.copy(),
                        "orig": predict_frames(predictor, orig),
                        "orig_indep": predict_frames(predictor, orig, chain=False),
                        "trunc": predict_frames(predictor, trunc, chain=False)})
+    if not result:
+        raise FileNotFoundError(f"{run_dir}: нет весов foldN.pt для выбранных фолдов")
     return result
 
 
@@ -143,14 +154,18 @@ def level_errors(names: list[str], oof: dict, regions: np.ndarray,
             d = np.linalg.norm(chain - oof["pred"][r, c[k]], axis=1)
             shift.append(int(np.argmin(d)) - (k + 1))
         err = np.linalg.norm(oof["pred"][r, c] - true, axis=1) * mm_per_px
-        rows.append(dict(index=int(oof["index"][r]), shift=tuple(shift),
+        rows.append(dict(row=r, index=int(oof["index"][r]), shift=tuple(shift),
                          any_shift=any(shift), max_err_mm=float(err.max())))
-    return pd.DataFrame(rows, columns=["index", "shift", "any_shift", "max_err_mm"])
+    return pd.DataFrame(rows, columns=["row", "index", "shift", "any_shift", "max_err_mm"])
 
 
 def crossfit_thresholds(names, folds: list[dict], objective="balanced",
                         default=0.5) -> list[np.ndarray]:
-    """Порог для фолда k — по OOF (исходные + обрезанные) остальных фолдов."""
+    """Порог для фолда k — по OOF (исходные + обрезанные) остальных фолдов.
+
+    Это убирает прямой подбор порога на k, но модели остальных OOF-фолдов могли
+    обучаться на снимках k; строгую вложенную валидацию не заменяет.
+    """
     if len(folds) < 2:
         raise ValueError("перекрёстный порог требует хотя бы двух фолдов")
     return [calibrate(names, [f for i, f in enumerate(folds) if i != k], objective,
@@ -165,9 +180,11 @@ def _visibility(names, parts: list[dict], thresholds: list[np.ndarray]) -> pd.Da
     return M.visibility_table(names, found.astype(float), pool["visible"], pool["labeled"], 0.5)
 
 
-def summarize(run_dir: str | Path, data: dict, folds: list[dict]) -> dict:
+def summarize(run_dir: str | Path, data: dict, folds: list[dict],
+              localization_thresholds: str = "saved") -> dict:
     names, regions = list(data["names"]), np.array(data["regions"])
-    out = {"run": str(run_dir), "folds": ",".join(str(f["fold"]) for f in folds)}
+    out = {"run": str(run_dir), "folds": ",".join(str(f["fold"]) for f in folds),
+           "localization_thresholds": localization_thresholds}
     lv = None
     for key in ("orig", "orig_indep"):
         orig = concat([f[key] for f in folds])
@@ -183,9 +200,26 @@ def summarize(run_dir: str | Path, data: dict, folds: list[dict]) -> dict:
                     f"level_err_frames_{tag}": int(levels.any_shift.sum())})
         if tag == "chain":
             lv = levels
+            center_cols = [names.index(n) for n in CENTERS]
+            active = np.concatenate([
+                f["orig"]["conf"][:, center_cols] >= f["thresholds"][center_cols]
+                for f in folds])
+            active_levels = levels[active[levels["row"].to_numpy(dtype=int)].all(axis=1)]
+            out["spine_frames_all_centers_found"] = len(active_levels)
+            out["level_err_frames_found"] = int(active_levels.any_shift.sum())
             e2e = M.end_to_end(names, orig["pred"], orig["true"], vis, regions[orig["index"]])
             out.update({f"e2e_{r.kind}_median": r["median"] for _, r in e2e.iterrows()})
             out.update({f"e2e_{r.kind}_p90": r.p90 for _, r in e2e.iterrows()})
+            found = np.concatenate([
+                f["orig"]["conf"] >= f["thresholds"][None]
+                for f in folds])
+            used = M.end_to_end(names, orig["pred"], orig["true"], vis & found,
+                                 regions[orig["index"]])
+            for _, metric in used.iterrows():
+                kind = metric["kind"]
+                out[f"e2e_found_{kind}_median"] = metric["median"]
+                out[f"e2e_found_{kind}_p90"] = metric["p90"]
+                out[f"e2e_found_{kind}_n"] = int(metric["n"])
     out["spine_frames"] = len(lv)
     parts = [f["trunc"] for f in folds] + [f["orig"] for f in folds]
     tables = {}
@@ -205,6 +239,8 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--run", nargs="+", required=True)
     p.add_argument("--pack", default="data/keypoints.npz")
+    p.add_argument("--device", choices=("auto", "cuda", "mps", "xpu", "cpu"),
+                   default="auto", help="устройство PyTorch (auto: CUDA, MPS, XPU, CPU)")
     p.add_argument("--crops", type=int, default=6)
     p.add_argument("--folds", type=int, nargs="*", default=None,
                    help="только эти фолды — для сравнения с недообученным прогоном")
@@ -212,33 +248,86 @@ def main() -> None:
                    help="пересчитать thresholds.csv прогона по рабочему инференсу")
     p.add_argument("--out", default=None, help="куда сохранить сводку и таблицы (csv)")
     a = p.parse_args()
+    if a.crops < 1:
+        p.error("--crops должен быть не меньше 1 для калибровки видимости")
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = select_device(a.device)
+    print(f"Устройство PyTorch: {device}")
     data = packmod.load(a.pack)
     names = list(data["names"])
     rows, per_point = [], []
+    report_dir = Path(a.out) if a.out else None
+    if report_dir:
+        report_dir.mkdir(parents=True, exist_ok=True)
     for run in a.run:
         folds = fold_oof(run, data, device, a.crops, folds=a.folds)
         if a.calibrate:
             th = calibrate(names, folds)
             th.to_csv(Path(run) / "thresholds.csv")
             print(f"{run}: пороги видимости пересчитаны по рабочему инференсу")
-            # цепочка позвоночника зависит от порогов — пересчитать с новыми
-            folds = fold_oof(run, data, device, a.crops, folds=a.folds, thresholds=th.to_numpy())
-        res = summarize(run, data, folds)
+        if len(folds) > 1:
+            # Отложенный фолд не участвует даже в выборе порога, от которого
+            # зависит декодирование уровня позвонка.
+            own_cfg = folds[0].get("config", {})
+            objective = own_cfg.get("infer", {}).get("threshold_objective", "balanced")
+            default = float(own_cfg.get("infer", {}).get("visibility_threshold", 0.5))
+            leave_one_out = crossfit_thresholds(names, folds, objective, default)
+            by_fold = {f["fold"]: t for f, t in zip(folds, leave_one_out)}
+            folds = fold_oof(run, data, device, a.crops, folds=a.folds, thresholds=by_fold)
+            protocol = "crossfit"
+        elif a.calibrate:
+            folds = fold_oof(run, data, device, a.crops, folds=a.folds,
+                             thresholds=th.to_numpy())
+            protocol = "same_fold_calibrated"
+        else:
+            protocol = "saved"
+        res = summarize(run, data, folds, localization_thresholds=protocol)
         rows.append(res["summary"])
         key = "crossfit" if "crossfit" in res["tables"] else "own"
         per_point.append(res["tables"][key].assign(run=run))
+        if report_dir:
+            merged = concat([f["orig"] for f in folds])
+            idx = merged["index"]
+            ident = {k: np.asarray(data[k])[idx]
+                     for k in ("ids", "studies", "regions", "sides")}
+            if protocol == "crossfit":
+                row_thresholds = np.concatenate([
+                    np.repeat(by_fold[f["fold"]][None], len(f["orig"]["index"]), axis=0)
+                    for f in folds])
+            else:
+                row_thresholds = np.repeat(
+                    run_thresholds(run, names)[None], len(idx), axis=0)
+            prefix = f"{Path(run).name}_" if len(a.run) > 1 else ""
+            np.savez_compressed(report_dir / f"{prefix}oof_evaluated.npz",
+                                names=np.asarray(names), thresholds=row_thresholds,
+                                protocol=np.asarray(protocol), **ident, **merged)
+            if a.crops > 0:
+                clipped = concat([f["trunc"] for f in folds])
+                crop_idx = clipped["index"]
+                crop_ident = {k: np.asarray(data[k])[crop_idx]
+                              for k in ("ids", "studies", "regions", "sides")}
+                crop_thresholds = np.concatenate([
+                    np.repeat((by_fold[f["fold"]] if protocol == "crossfit"
+                               else run_thresholds(run, names))[None],
+                              len(f["trunc"]["index"]), axis=0)
+                    for f in folds])
+                variants = np.concatenate([
+                    np.tile(np.arange(a.crops), len(f["trunc"]["index"]) // a.crops)
+                    for f in folds])
+                np.savez_compressed(report_dir / f"{prefix}oof_evaluated_truncated.npz",
+                                    names=np.asarray(names), thresholds=crop_thresholds,
+                                    protocol=np.asarray(protocol), crop_variant=variants,
+                                    crops_per_image=np.asarray(a.crops), **crop_ident,
+                                    **clipped)
     pd.set_option("display.width", 220)
     summary = pd.DataFrame(rows)
     print(summary.round(3).T.to_string())
     table = pd.concat(per_point)
     print(table.pivot(index="point", columns="run",
                       values=["hallucination_rate", "miss_rate"]).round(3).to_string())
-    if a.out:
-        Path(a.out).mkdir(parents=True, exist_ok=True)
-        summary.to_csv(Path(a.out) / "metrics_eval_summary.csv", index=False)
-        table.to_csv(Path(a.out) / "metrics_eval_visibility.csv", index=False)
+    if report_dir:
+        summary.to_csv(report_dir / "metrics_eval_summary.csv", index=False)
+        table.to_csv(report_dir / "metrics_eval_visibility.csv", index=False)
 
 
 if __name__ == "__main__":

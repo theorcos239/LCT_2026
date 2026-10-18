@@ -1,0 +1,73 @@
+seed: 0
+deterministic: true
+
+data:
+  pack: data/keypoints.npz            # собирается python -m dxa_qc.pack
+  crops: Processing/dxa-crops.json   # врачебные фрагменты из Пустой 2.docx; только обучение
+  folds: folds.csv
+  points: full                        # full: 29 каналов | core: 21 (без боковых краёв) | minimal: 14 (только те, что входят в критерии)
+  canvas: [352, 320]                  # покрывает все обучающие снимки (максимум 349×300)
+  mm_per_px: 0.6
+  use_clahe: false                    # решается аблацией
+  scale: 1                            # 2 → холст ×2, эксперимент
+
+model:
+  pretrained: true                    # веса ImageNet, если доступен torchvision
+  decoder_channels: [256, 128, 64, 32, 16]
+
+loss:
+  alpha: 2.0
+  beta: 4.0
+  soft_mask_weight: 0.15              # чужая область обучается нулевым картам
+
+heatmap:
+  sigma: 2.0                          # 95% массы в радиусе 4.9 px
+  decode_window: 11                   # soft-argmax, ±2.5σ
+
+augment:
+  enabled: true
+  rotation_deg: 15.0                  # шире порога 5°, иначе модель решит, что ось вертикальна
+  shift_frac: 0.10                    # заодно синтезирует случаи «структура за кадром»
+  scale: 0.10
+  brightness: 0.20
+  contrast: 0.20
+  gamma: [0.8, 1.25]
+  noise_std: 4.0
+  blur_sigma: 0.6
+  p_geometric: 0.9
+  p_intensity: 0.7
+  p_hflip_spine: 0.5                  # бедро не отражаем: оно приведено к левому
+  p_crop: 0.5                         # обрезать край: учит говорить «точки нет в кадре»
+  crop_max_frac: 0.35                 # не больше трети кадра
+  crop_targeted: 0.6                  # доля обрезов вплотную к размеченной точке
+  crop_jitter_px: 10.0                # ±6 мм вокруг точки: трудные примеры у границы
+
+train:
+  folds: [0, 1, 2, 3, 4]
+  epochs: 600                         # лучшая эпоха фолда 0 — 279, фолд 1 остановлен на 329 (см. README)
+  batch_size: 16
+  num_workers: 0                    # epoch обновляется в Dataset; persistent workers повторяли аугментации
+  lr_encoder: 3.0e-5
+  lr_decoder: 3.0e-4
+  weight_decay: 1.0e-4
+  warmup_epochs: 5
+  patience: 600                       # ранняя остановка по медианной ошибке в мм (>= epochs — выключена)
+  checkpoint_every: 50                # как часто писать fold{N}_last.pt для продолжения
+  trunc_eval_every: 10                # как часто мерить выдумывание точек на обрезанных кадрах
+  ema_decay: 0.999
+  amp: false                          # титаны могут быть Pascal
+  out_dir: runs/keypoints_crops      # отдельный прогон: старые OOF и пороги не смешиваются
+  init_dir: null                      # для короткого дообучения: прежние fold{N}.pt
+
+infer:
+  visibility_threshold: 0.5           # если отсутствующих примеров точки мало для калибровки
+  threshold_objective: balanced       # (TPR + TNR) / 2; f1 уводил пороги к 0.05 и точки выдумывались
+  tta_rotations: [-5, 0, 5]
+  tta_flip_spine: true                # с обратной перестановкой каналов
+  spine_chain: true                   # центры L1–L4 — соседние позвонки (structure.py)
+  spine_chain_mode: hypotheses        # несколько пиков, 21 отклик, геометрия и диски
+  spine_chain_average: false          # softmax-веса — диагностика; MAP сохраняет дискретный уровень
+  spine_chain_temperature: 1.0        # температура относительных весов пяти лучших цепочек
+
+eval:
+  crops_per_image: 6                  # обрезанных вариантов отложенного кадра: видимость известна точно
