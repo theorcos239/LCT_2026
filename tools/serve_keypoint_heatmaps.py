@@ -154,7 +154,7 @@ class Viewer:
         self.names = list(self.model.names)
         if list(self.data["names"]) != self.names:
             raise ValueError("Порядок точек в pack и чекпоинте различается")
-        fold = int(checkpoint.stem.removeprefix("fold"))
+        fold = int(checkpoint.stem.removeprefix("tail_").removeprefix("fold"))
         folds_path = Path(self.model.cfg["data"]["folds"])
         if not folds_path.is_absolute():
             folds_path = ROOT / folds_path
@@ -171,7 +171,7 @@ class Viewer:
         self.allowed = set(self.indices)
         self.lock = threading.Lock()
         self.run_warning = None
-        oof_path = ROOT / "runs/keypoints/oof.npz"
+        oof_path = checkpoint.parent / "oof.npz"
         if oof_path.exists() and np.isfinite(self.model.median_mm):
             with np.load(oof_path, allow_pickle=False) as z:
                 rows = np.isin(z["index"], self.indices)
@@ -181,10 +181,10 @@ class Viewer:
                                        self.model.cfg["data"].get("mm_per_px", .6))
                     if abs(oof_median - self.model.median_mm) > .25:
                         self.run_warning = (
-                            "Этот чекпоинт и локальный OOF относятся к разным прогонам: "
+                            "Этот чекпоинт и OOF рядом с ним не совпадают по метрике: "
                             f"медиана весов {self.model.median_mm:.2f} мм, "
-                            f"локального OOF {oof_median:.2f} мм. "
-                            "Карты настоящие, но их нельзя напрямую сравнивать с локальными метриками."
+                            f"OOF {oof_median:.2f} мм. "
+                            "Проверьте, что это веса того же прогона и той же эпохи."
                         )
 
     def items(self) -> dict:
@@ -275,7 +275,7 @@ def handler_for(viewer: Viewer):
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--checkpoint", type=Path, default=ROOT / "Processing/drive_models/fold0.pt")
+    p.add_argument("--checkpoint", type=Path, default=ROOT / "runs/keypoints_crops/fold0.pt")
     p.add_argument("--pack", type=Path, default=ROOT / "data/keypoints.npz")
     p.add_argument("--device", choices=("auto", "mps", "cpu"), default="auto")
     p.add_argument("--port", type=int, default=8767)

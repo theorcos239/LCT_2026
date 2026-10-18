@@ -95,6 +95,8 @@ JSON не содержит пиксели снимков. Для восстан�
 `data/keypoints.npz`; ничего не пропущено. Готовый профиль
 `configs/keypoints_crops.yaml` подключает именно этот JSON к **новому**
 прогону `runs/keypoints_crops` и сохраняет прежний pack для валидации.
+JSON с рамками и координатами находится в Git; пикселей DXA в нём нет.
+Результаты обучения — в [сводке для команды](ИТОГ_МОДЕЛЬ_ТОЧЕК_2026-10-19.md).
 
 ```bash
 PYTHONPATH=src python -m dxa_qc.train --config configs/keypoints_crops.yaml
@@ -104,7 +106,7 @@ PYTHONPATH=src python -m dxa_qc.train --config configs/keypoints_crops.yaml
 качества имеет смысл только на тех же отложенных исследованиях и с той же
 процедурой оценки. Исходный `runs/keypoints` новым профилем не перезаписывается.
 
-Сохраните JSON локально, например в `Processing/dxa-crops.json`, и укажите
+Для другого экспорта сохраните JSON в `Processing/dxa-crops.json` и укажите
 его в конфиге без изменения исходного `data/keypoints.npz`:
 
 ```bash

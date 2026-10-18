@@ -1,7 +1,7 @@
 """Локальный интерактивный отчёт по сохранённому OOF модели точек.
 
 PYTHONPATH=src python tools/build_keypoint_validation_report.py \
-    --oof runs/keypoints/oof.npz --pack data/keypoints.npz
+    --oof runs/keypoints_crops/oof_evaluated.npz --pack data/keypoints.npz
 
 HTML содержит медицинские изображения, поэтому по умолчанию пишется в
 игнорируемую Git папку Processing/. Он показывает сохранённые предсказания;
@@ -114,7 +114,7 @@ def make_payload(oof_path: Path, pack_path: Path, folds_path: Path,
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--oof", type=Path, default=ROOT / "runs/keypoints/oof.npz")
+    parser.add_argument("--oof", type=Path, default=ROOT / "runs/keypoints_crops/oof_evaluated.npz")
     parser.add_argument("--pack", type=Path, default=ROOT / "data/keypoints.npz")
     parser.add_argument("--folds", type=Path, default=ROOT / "folds.csv")
     parser.add_argument("--out", type=Path,

@@ -5,13 +5,13 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
-CHECKPOINT_PATH="$PROJECT_ROOT/Processing/drive_models/fold0.pt"
+CHECKPOINT_PATH="$PROJECT_ROOT/runs/keypoints_crops/fold0.pt"
 PYTHON_PATH="$PROJECT_ROOT/Processing/.venv-keypoints/bin/python"
 LOG_PATH="$PROJECT_ROOT/Processing/keypoint_viewer.log"
 
 if [[ ! -f "$CHECKPOINT_PATH" ]]; then
   echo "Не найдены веса модели точек fold0.pt."
-  echo "Выберите этот файл в открывшемся окне, если он у вас есть."
+  echo "Выберите fold0.pt нового прогона keypoints_crops в открывшемся окне."
   SELECTED_FILE="$(osascript -e 'POSIX path of (choose file with prompt "Выберите обученные веса fold0.pt модели точек")' 2>/dev/null || true)"
   if [[ -z "$SELECTED_FILE" ]]; then
     echo "Запуск остановлен: без fold0.pt настоящие тепловые карты получить нельзя."
