@@ -1,8 +1,14 @@
 {
-  "axis_deg": 3.9868,
+  "axis_deg": 3.9224,
   "axis_disagree_deg": 2.0,
+  "axis_curved_max_mm": 99.0,
+  "axis_sign_max": 99,
+  "axis_half_max_deg": 99.0,
   "iliac_area": 0.001,
+  "top_margin_min_mm": 0.0,
   "artifact_score": 24.0136,
+  "artifact_min_elongation": 2.0,
+  "artifact_max_vert_deg": 25.0,
   "appearance": 0.5,
   "appearance_by_criterion": {
     "position": 0.1796,
@@ -18,8 +24,8 @@
       "b": -1.954476
     },
     "artifacts": {
-      "w": 0.03499,
-      "b": -2.351883
+      "w": 0.034776,
+      "b": -2.343786
     }
   }
 }

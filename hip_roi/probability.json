@@ -17,18 +17,18 @@
   },
   "margins": {
     "params": {
-      "w": 0.181035,
-      "b": -2.258639
+      "w": 0.217178,
+      "b": -1.926094
     },
     "score": "max(30 - m_top_mm, 30 - m_bottom_mm, 20 - m_lat_mm), мм",
     "n": 150,
     "positives": 7,
     "tp": 4,
-    "fp": 12,
+    "fp": 8,
     "fn": 3,
-    "f1": 0.3478,
-    "roc_auc": 0.8916,
-    "brier_oof": 0.0336,
+    "f1": 0.4211,
+    "roc_auc": 0.9076,
+    "brier_oof": 0.0305,
     "base_rate": 0.0467
   }
 }

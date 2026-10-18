@@ -112,7 +112,12 @@ def _ischium_B(img, side, norm, mask, T, h, flags, diag):
     """
     lo, hi = D_TI_RANGE_MM
     tried = []
-    for strict in (False, True):
+    # Полутоновые кадры: обычная маска часто сливает кость с мягкими тканями —
+    # строгий порог пробуем первым. Признак: мало насыщенных пикселей.
+    u8 = to_uint8(img)
+    halftone = float((u8 >= 250).mean()) < 0.02
+    order = (True, False) if halftone else (False, True)
+    for strict in order:
         m = to_lateral_left(bone_mask(img, weak_frac=1.0), side) if strict else mask
         y, info = lm.I1_ischium_bottom(norm, m, T)
         tried.append({'strict': strict, 'y': y, **info})
@@ -120,9 +125,13 @@ def _ischium_B(img, side, norm, mask, T, h, flags, diag):
             if strict:
                 flags.append('I:strict_mask')
             diag['I'] = tried
+            diag['I_found_mm'] = round(px2mm(int(y) - T), 1)
             return min(int(y), h)
+    # Prior только если обе маски не дали I в анатомическом коридоре —
+    # на вердикт scan_length (длина кадра) не влияет, только на margins.
     flags.append('I:anatomical_prior')
     diag['I'] = tried
+    diag['I_prior_mm'] = D_TI_MM
     return min(int(T) + mm2px(D_TI_MM), h)
 
 
