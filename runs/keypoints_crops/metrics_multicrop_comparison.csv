@@ -1,0 +1,7 @@
+variant,service_f1,level_error_frames,spine_p90_mm,axis_median_deg,axis_p90_deg,abstain_frames,accepted_spine_frames,status
+geometry,0.636,,,,,,,published_baseline
+full_frame,0.619,10,10.135,0.374,1.246,0,72,baseline
+multicrop_raw,,28,32.025,0.525,1.407,0,72,kill_gate_failed
+multicrop_with_abstain,,2,32.025,0.525,1.407,57,16,diagnostic_only_low_coverage
+semantic_oracle,,5,20.467,0.366,1.207,12,61,gate_failed_localization_and_endplates
+semantic_auto,,4,10.135,0.375,1.176,14,59,gate_failed_endplates

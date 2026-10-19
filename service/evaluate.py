@@ -83,7 +83,9 @@ def _risk_score(vtype: str, details: dict) -> float:
 
 def run(hip_method: str = 'kit2', keypoints: bool = False,
         keypoints_oof: bool = False, cnn: bool = True,
-        roi_rule: str = 'scan_length', folds: list[int] | None = None) -> pd.DataFrame:
+        roi_rule: str = 'scan_length', folds: list[int] | None = None,
+        keypoints_dir: str | Path | None = None,
+        keypoints_multicrop: bool = False) -> pd.DataFrame:
     """Прогон конвейера по всем уникальным кадрам обучающего набора.
 
     keypoints=True считает ось позвоночника и отступы ROI моделью ключевых
@@ -111,11 +113,17 @@ def run(hip_method: str = 'kit2', keypoints: bool = False,
     if folds is not None:
         df = df[df.fold.isin(folds)].reset_index(drop=True)
     a = Analyzer.load(hip_method=hip_method, keypoints=keypoints or keypoints_oof,
+                      keypoints_dir=keypoints_dir,
+                      keypoints_multicrop=keypoints_multicrop,
+                      keypoints_verdict=keypoints or keypoints_oof,
                       cnn=False, cnn_oof=cnn, roi_rule=roi_rule)
     by_fold = {}
     if keypoints_oof:
         for k in sorted(df.fold.unique()):
-            by_fold[int(k)] = KeypointBackend(folds=[int(k)])
+            by_fold[int(k)] = KeypointBackend(
+                keypoints_dir, folds=[int(k)], multicrop=keypoints_multicrop,
+                use_for_verdict=True,
+            )
         missing = [k for k, b in by_fold.items() if not b.available]
         if missing:
             raise SystemExit(f'для OOF нужны веса каждого оцениваемого фолда, нет: {missing}; '
@@ -355,6 +363,10 @@ def main() -> int:
                     help='ось и отступы ROI считать моделью ключевых точек (ансамбль)')
     ap.add_argument('--keypoints-oof', action='store_true',
                     help='то же, но каждый кадр считает модель фолда, не видевшая его')
+    ap.add_argument('--keypoints-dir', type=Path, default=None,
+                    help='каталог весов модели точек')
+    ap.add_argument('--keypoints-multicrop', action='store_true',
+                    help='оценить multi-crop вместо full-frame')
     ap.add_argument('--no-cnn', action='store_true',
                     help='без нейросети cnn_qc: вердикт по одной геометрии (базовая линия)')
     ap.add_argument('--roi-rule', default='scan_length', choices=('scan_length', 'margins'))
@@ -364,7 +376,9 @@ def main() -> int:
     args = ap.parse_args()
 
     d = run(args.hip_method, keypoints=args.keypoints, keypoints_oof=args.keypoints_oof,
-            cnn=not args.no_cnn, roi_rule=args.roi_rule, folds=args.folds)
+            cnn=not args.no_cnn, roi_rule=args.roi_rule, folds=args.folds,
+            keypoints_dir=args.keypoints_dir,
+            keypoints_multicrop=args.keypoints_multicrop)
     cnn_flags = int(d['flags'].str.contains('cnn:').sum())
     if cnn_flags:
         print(f'у {cnn_flags} кадров нет вердикта сети (флаг cnn:*): в OOF-режиме это кадры '

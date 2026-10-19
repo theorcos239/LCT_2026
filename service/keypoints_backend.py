@@ -59,6 +59,7 @@
 from __future__ import annotations
 
 import sys
+import json
 from pathlib import Path
 
 import numpy as np
@@ -70,8 +71,10 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from dxa_qc.metrics import axis_angle, axis_curvature   # noqa: E402 — после sys.path
+from dxa_qc.spine_shape import (curve_descriptors, fused_tilt, source_variances,
+                                tilt_sources)
 from hip_roi.geometry import BOTTOM_MM, LAT_MM, MM_PER_PX, TOP_MM, px2mm
-from spine_qc.geometry import AXIS_LIMIT_DEG
+from spine_qc.criteria import axis_decision
 
 # dxa_qc.metrics — чистая геометрия на numpy/pandas, torch она не тянет: бэкенд
 # импортируется и там, где torch не установлен, и сообщает об этом флагом.
@@ -121,7 +124,7 @@ def _flip_x(x: float, width: int) -> float:
 # --------------------------------------------------------------------------- #
 #  Геометрия поверх точек
 # --------------------------------------------------------------------------- #
-def axis_from_points(get) -> dict | None:
+def axis_from_points(get, params: dict | None = None) -> dict | None:
     """Ось позвоночника по центрам тел и, независимо, по боковым краям.
 
     Две конструкции, как в `spine_qc`: центры тел (вердикт) и середины боковых
@@ -157,14 +160,72 @@ def axis_from_points(get) -> dict | None:
     if curvature > 12.0:
         flags.append('axis:curved')
 
-    violated = abs(ang) > AXIS_LIMIT_DEG
-    text = (f'ось позвоночника отклонена на {abs(ang):.1f}° '
-            f'(допустимо {AXIS_LIMIT_DEG:.0f}°)') if violated else ''
-    return {'angle_deg': round(ang, 2),
+    # Исправленный угол строится ниже по тем же точкам: centers + пластинки.
+    shape_names = SPINE_AXIS_POINTS + [n for pair in SPINE_EDGE_PAIRS for n in pair]
+    shape_points = np.zeros((len(shape_names), 2), float)
+    shape_visible = np.zeros(len(shape_names), bool)
+    for i, name in enumerate(shape_names):
+        point = get(name)
+        if point is not None:
+            shape_points[i], shape_visible[i] = point, True
+    sources = tilt_sources(shape_points, shape_visible, shape_names, MM_PER_PX)
+    curve = curve_descriptors(shape_points, shape_visible, shape_names, MM_PER_PX)
+    params = params or {}
+    sigmas = source_variances(sources, curve, params)
+    fused = fused_tilt(sources, sigmas)
+    decision = axis_decision(fused['theta_fused_deg'], fused['sigma_deg'],
+                             fused['Q'], fused['n_sources'],
+                             {'uncertainty_k': params.get('uncertainty_k', 1.0)})
+    if decision['state'] == 'undetermined':
+        flags.append('axis:needs_review')
+    correction = (None if fused['theta_fused_deg'] is None
+                  else float(ang - fused['theta_fused_deg']))
+    return {'angle_deg': (None if fused['theta_fused_deg'] is None
+                          else round(float(fused['theta_fused_deg']), 2)),
+            'angle_centers_deg': round(ang, 2),
             'angle_edges_deg': None if ang_edges is None else round(ang_edges, 2),
             'curvature_mm': round(curvature, 1),
             'disagreement_deg': None if disagree is None else round(disagree, 2),
-            'source': 'keypoints', 'flags': flags, 'violated': bool(violated), 'text': text}
+            'sigma_deg': fused['sigma_deg'], 'Q': fused['Q'],
+            'weights': fused['weights'], 'sources': sources, 'curve': curve,
+            'variance_params': params,
+            'correction_deg': correction, 'state': decision['state'],
+            'reasons': decision['reasons'],
+            'source': 'keypoints_fused', 'flags': flags,
+            'violated': decision['violated'], 'text': decision['text']}
+
+
+def fuse_axis_with_contour(point_axis: dict, contour_axis: dict) -> dict:
+    """Добавить независимый контурный угол и повторить свёртку."""
+    if not point_axis:
+        return point_axis
+    sources = dict(point_axis.get('sources') or {})
+    sources['theta_contour_deg'] = contour_axis.get('angle_deg')
+    curve = dict(point_axis.get('curve') or {})
+    params = {**(point_axis.get('variance_params') or {}),
+              'contour_curvature_mm': contour_axis.get('curvature_mm') or 0.0}
+    sigmas = source_variances(sources, curve, params)
+    fused = fused_tilt(sources, sigmas)
+    decision = axis_decision(fused['theta_fused_deg'], fused['sigma_deg'],
+                             fused['Q'], fused['n_sources'],
+                             {'uncertainty_k': params.get('uncertainty_k', 1.0)})
+    out = dict(point_axis)
+    out.update({
+        'angle_deg': (None if fused['theta_fused_deg'] is None
+                      else round(float(fused['theta_fused_deg']), 2)),
+        'sigma_deg': fused['sigma_deg'], 'Q': fused['Q'],
+        'weights': fused['weights'], 'sources': sources,
+        'correction_deg': (None if fused['theta_fused_deg'] is None
+                           else float(point_axis['angle_centers_deg']
+                                      - fused['theta_fused_deg'])),
+        'state': decision['state'], 'reasons': decision['reasons'],
+        'violated': decision['violated'], 'text': decision['text'],
+    })
+    flags = [f for f in out.get('flags', []) if f != 'axis:needs_review']
+    if decision['state'] == 'undetermined':
+        flags.append('axis:needs_review')
+    out['flags'] = flags
+    return out
 
 
 def roi_from_points(get, shape: tuple[int, int], side: str) -> dict | None:
@@ -243,11 +304,21 @@ class KeypointBackend:
     """
 
     def __init__(self, run_dir: str | Path | None = None, device: str = 'cpu',
-                 quiet: bool = True, folds: list[int] | None = None):
+                 quiet: bool = True, folds: list[int] | None = None,
+                 multicrop: bool = False, use_for_verdict: bool = True):
         self.predictor, self.error = None, None
+        self.multicrop = bool(multicrop)
+        self.use_for_verdict = bool(use_for_verdict)
+        self.axis_gate_passed = False
+        self.axis_params = {}
         try:
-            from dxa_qc.infer import load_predictor
+            from dxa_qc.infer import RUN_DIR, load_predictor
             self.predictor = load_predictor(run_dir, device, folds)
+            gate_path = Path(run_dir or RUN_DIR) / 'metrics_axis_fused.json'
+            if gate_path.exists():
+                gate = json.loads(gate_path.read_text(encoding='utf-8'))
+                self.axis_gate_passed = bool(gate.get('gate_passed'))
+                self.axis_params = dict(gate.get('runtime_params') or {})
         except Exception as e:                       # noqa: BLE001 — причина уходит во флаг
             self.error = f'{type(e).__name__}: {e}'
             if not quiet:
@@ -274,11 +345,18 @@ class KeypointBackend:
         if side == 'rhip':
             img = img[:, ::-1].copy()
 
-        out = self.predictor.predict(img)
+        out = (self.predictor.predict_semantic(img)
+               if side == 'spine' and self.multicrop
+               else self.predictor.predict(img))
         coords = np.asarray(out['coords'], dtype=float).copy()
         if side == 'rhip':
             coords[:, 0] = _flip_x(coords[:, 0], w)
 
+        multicrop_raw = out.get('multicrop')
+        multicrop = ({k: v for k, v in multicrop_raw.items() if k != 'sources'}
+                     if multicrop_raw else None)
+        if multicrop and multicrop.get('abstain'):
+            flags += ['keypoints:crop_disagree', 'keypoints:numbering_doubt']
         return {
             'names': list(out['names']),
             'coords': coords,                       # (C, 2) в исходном кадре
@@ -287,6 +365,7 @@ class KeypointBackend:
             'visible': np.asarray(out['visible'], dtype=bool),
             'region': out['region'],                # 'spine' | 'hip' | 'out_of_scope'
             'flags': flags,
+            'multicrop': multicrop,
         }
 
     # ------------------------------------------------------------------ #
@@ -317,6 +396,8 @@ class KeypointBackend:
         res = {
             'region_model': kp['region'],
             'axis': None, 'roi': None, 'rotation': None, 'iliac': None,
+            'axis_diagnostic': None, 'roi_diagnostic': None,
+            'multicrop': kp.get('multicrop'),
             'points': {n: {'x': round(float(kp['coords'][i][0]), 1),
                            'y': round(float(kp['coords'][i][1]), 1),
                            'confidence': round(float(kp['confidence'][i]), 3),
@@ -326,16 +407,26 @@ class KeypointBackend:
         }
 
         if region == 'spine':
-            res['axis'] = axis_from_points(get)
-            if res['axis'] is None:
+            axis = axis_from_points(get, self.axis_params)
+            res['axis_diagnostic'] = axis
+            abstain = bool((kp.get('multicrop') or {}).get('abstain'))
+            res['axis'] = (axis if self.use_for_verdict and self.axis_gate_passed
+                           and not abstain else None)
+            if axis is None:
                 flags.append('keypoints:axis_points_missing')
             else:
-                flags += res['axis']['flags']
+                flags += axis['flags']
+            if abstain:
+                flags.append('keypoints:axis_abstained')
+            if self.use_for_verdict and not self.axis_gate_passed:
+                flags.append('keypoints:axis_gate_failed')
             res['iliac'] = {side: bool(kp['visible'][idx[f'iliac_{side}']])
                             for side in ('right', 'left') if f'iliac_{side}' in idx}
         else:
-            res['roi'] = roi_from_points(get, px.shape, region)
-            if res['roi'] is None:
+            roi = roi_from_points(get, px.shape, region)
+            res['roi_diagnostic'] = roi
+            res['roi'] = roi if self.use_for_verdict else None
+            if roi is None:
                 flags.append('keypoints:roi_points_missing')
             res['rotation'] = bulge_from_points(get)
         return res

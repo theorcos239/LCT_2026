@@ -88,13 +88,16 @@ class Analyzer:
     @classmethod
     def load(cls, hip_method: str = 'kit2', strict_region: bool = True,
              keypoints: bool = False, keypoints_dir=None, cnn: bool = True,
-             cnn_oof: bool = False, roi_rule: str = 'scan_length') -> 'Analyzer':
-        """keypoints=True подключает модель ключевых точек (`runs/keypoints`).
+             cnn_oof: bool = False, roi_rule: str = 'scan_length',
+             keypoints_multicrop: bool = False,
+             keypoints_verdict: bool = False) -> 'Analyzer':
+        """keypoints=True подключает модель точек в диагностическом режиме.
 
-        Она забирает себе два измерения — угол оси позвоночника и отступы ROI
-        бедра, — потому что сквозная ошибка по ним измерена и мала (0.50° и
-        0.5 мм out-of-fold против порогов 5° и 30/20 мм). Остальные критерии остаются
-        за контурной геометрией: см. `keypoints_backend`. Недоступная модель
+        Подмена контура разрешается отдельно через keypoints_verdict=True:
+        исследовательская OOF-оценка нового прогона не показала прироста
+        итогового F1. Multi-crop также включается отдельным флагом и при
+        конфликте цепочек автоматически отказывается от точечной оси.
+        Недоступная модель
         (нет torch, нет весов) не роняет сервис: кадры считаются контурной
         геометрией, а причина уходит во флаг каждой строки отчёта — молчаливой
         подмены метода быть не должно.
@@ -112,7 +115,11 @@ class Analyzer:
         if keypoints:
             try:
                 from .keypoints_backend import KeypointBackend
-                kp = KeypointBackend(keypoints_dir)
+                kp = KeypointBackend(
+                    keypoints_dir,
+                    multicrop=keypoints_multicrop,
+                    use_for_verdict=keypoints_verdict,
+                )
             except Exception as e:      # noqa: BLE001 — нет torch, нет src/dxa_qc
                 kp = _Unavailable(f'{type(e).__name__}: {e}')
         return cls(region=RegionClassifier(), spine=SpineQC(),
@@ -138,9 +145,14 @@ class Analyzer:
             out['flags'].append(f'keypoints:failed({type(e).__name__}: {e})')
             return None
         out['flags'] += kp['flags']
-        out['details']['keypoints'] = {'region_model': kp['region_model'],
-                                       'points': kp['points'],
-                                       'iliac_visible': kp['iliac']}
+        out['details']['keypoints'] = {
+            'region_model': kp['region_model'],
+            'points': kp['points'],
+            'iliac_visible': kp['iliac'],
+            'axis_diagnostic': kp.get('axis_diagnostic'),
+            'roi_diagnostic': kp.get('roi_diagnostic'),
+            'multicrop': kp.get('multicrop'),
+        }
         return kp
 
     def _cnn(self, crit: str, px: np.ndarray, region: str, geometry, out: dict) -> dict | None:
@@ -227,12 +239,16 @@ class Analyzer:
             if kp and kp['axis'] is not None:
                 contour_axis = res['criteria']['axis']
                 out['details']['spine']['axis_contour'] = contour_axis
+                from .keypoints_backend import fuse_axis_with_contour
+                kp['axis'] = fuse_axis_with_contour(kp['axis'], contour_axis)
                 # Две конструкции внутри модели точек коррелируют (общий
                 # энкодер) и расходятся редко — настоящая независимая проверка
                 # здесь именно контурный угол.
                 a, b = kp['axis']['angle_deg'], contour_axis.get('angle_deg')
-                if b is not None and abs(a - b) > AXIS_METHODS_DISAGREE_DEG:
+                if a is not None and b is not None and abs(a - b) > AXIS_METHODS_DISAGREE_DEG:
                     out['flags'].append('axis:keypoints_vs_contour_disagree')
+                if kp['axis'].get('state') == 'undetermined':
+                    out['flags'].append('axis:needs_review')
                 out['details']['spine']['axis'] = kp['axis']
                 res['criteria']['axis'] = kp['axis']
             art = res['criteria']['artifacts']

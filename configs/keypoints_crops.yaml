@@ -68,6 +68,15 @@ infer:
   spine_chain_mode: hypotheses        # несколько пиков, 21 отклик, геометрия и диски
   spine_chain_average: false          # softmax-веса — диагностика; MAP сохраняет дискретный уровень
   spine_chain_temperature: 1.0        # температура относительных весов пяти лучших цепочек
+  multicrop:
+    enabled: false                    # включать только после OOF-гейта
+    mode: semantic                    # semantic-v2; прежний all-channel режим доступен как v1
+    config: configs/spine_multicrop.yaml
+    include_full_frame: true          # якорь и независимая проверка полос
+    bands: [[0.0, 0.38], [0.13, 0.50], [0.27, 0.69], [0.45, 1.0]]
+    edge_margin_px: 10                # не доверять точкам у искусственного среза
+    disagree_mm: 6.0                  # outlier и конфликт цепочек
+    abstain_on_chain_conflict: true
 
 eval:
   crops_per_image: 6                  # обрезанных вариантов отложенного кадра: видимость известна точно

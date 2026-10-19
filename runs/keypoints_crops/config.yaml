@@ -78,5 +78,18 @@ infer:
   spine_chain_mode: hypotheses
   spine_chain_average: false
   spine_chain_temperature: 1.0
+  multicrop:
+    enabled: false
+    mode: semantic
+    config: configs/spine_multicrop.yaml
+    include_full_frame: true
+    bands:
+    - [0.0, 0.38]
+    - [0.13, 0.5]
+    - [0.27, 0.69]
+    - [0.45, 1.0]
+    edge_margin_px: 10
+    disagree_mm: 6.0
+    abstain_on_chain_conflict: true
 eval:
   crops_per_image: 6

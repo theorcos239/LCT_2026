@@ -123,6 +123,17 @@ def axis_curvature(centers: np.ndarray, mm_per_px: float = MM_PER_PX) -> float:
     return float(np.abs(p @ n).max() * mm_per_px)
 
 
+def endplate_angle(edge_pairs: np.ndarray) -> float:
+    """Средний угол линий left-right к горизонтали, в конвенции оси."""
+    values = []
+    for left, right in np.asarray(edge_pairs, float):
+        d = left - right
+        if d[0] < 0:
+            d = -d
+        values.append(-np.arctan2(d[1], d[0]))
+    return float(np.degrees(np.arctan2(np.sin(values).sum(), np.cos(values).sum())))
+
+
 def end_to_end(names: list[str], pred: np.ndarray, true: np.ndarray, visible: np.ndarray,
                regions: np.ndarray) -> pd.DataFrame:
     """Ошибка производных величин: угол оси, отступы ROI и выступ малого вертела.
@@ -133,6 +144,8 @@ def end_to_end(names: list[str], pred: np.ndarray, true: np.ndarray, visible: np
     idx = {n: i for i, n in enumerate(names)}
     bulge = (idx["trochanter_minor"], idx["shaft_medial"])
     spine_axis = [idx[f"l{i}_center"] for i in range(1, 5)]
+    spine_edges = [(idx[f"l{i}_edge_left"], idx[f"l{i}_edge_right"])
+                   for i in range(1, 5)]
     margins = {"top": idx["trochanter_major"], "bottom": idx["ischium_bottom"],
                "lateral": idx["trochanter_lateral"]}
     rows = []
@@ -140,6 +153,12 @@ def end_to_end(names: list[str], pred: np.ndarray, true: np.ndarray, visible: np
         if region == "spine" and visible[i, spine_axis].all():
             rows.append(dict(kind="axis_deg", error=abs(axis_angle(pred[i, spine_axis])
                                                         - axis_angle(true[i, spine_axis]))))
+            active_edges = [pair for pair in spine_edges if visible[i, list(pair)].all()]
+            if len(active_edges) >= 3:
+                ep = np.asarray(active_edges)
+                a = endplate_angle(pred[i, ep])
+                b = endplate_angle(true[i, ep])
+                rows.append(dict(kind="endplate_axis_deg", error=abs(a - b)))
         elif region == "hip":
             for name, c in margins.items():
                 if visible[i, c]:

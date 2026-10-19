@@ -17,13 +17,16 @@ runs/**
 !runs/keypoints/fold*_history.csv
 !runs/keypoints/oof.npz
 !runs/keypoints/oof_points.csv
-# Прогон с врачебными кропами: только конфиг, числовые метрики и OOF без
-# пикселей. Все веса по-прежнему отсекаются общим правилом *.pt выше.
+# Прогон с подтверждёнными врачебными кропами. Веса отсекаются *.pt;
+# конфиг, пороги, метрики и OOF без пикселей — в git.
 !runs/keypoints_crops/
 !runs/keypoints_crops/config.yaml
 !runs/keypoints_crops/thresholds.csv
+!runs/keypoints_crops/thresholds_crop.csv
 !runs/keypoints_crops/metrics_*.csv
+!runs/keypoints_crops/metrics_*.json
 !runs/keypoints_crops/fold*_history.csv
+!runs/keypoints_crops/fold0_paired_spine.csv
 !runs/keypoints_crops/oof.npz
 !runs/keypoints_crops/oof_points.csv
 !runs/keypoints_crops/oof_truncated.npz

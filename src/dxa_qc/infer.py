@@ -20,8 +20,11 @@ from .heatmaps import decode, mask_outside
 from .model import KeypointNet
 from .structure import chain_decode, chain_decode_hypotheses
 
-# Каталог прогона по умолчанию — тот же, что train.out_dir в configs/keypoints.yaml.
-RUN_DIR = Path(__file__).resolve().parents[2] / "runs" / "keypoints"
+# Новый прогон с врачебными фрагментами предпочтителен. Старый каталог остаётся
+# fallback, чтобы установка без новых весов продолжала работать.
+_RUNS = Path(__file__).resolve().parents[2] / "runs"
+RUN_DIR = _RUNS / "keypoints_crops"
+LEGACY_RUN_DIR = _RUNS / "keypoints"
 
 
 def _rotate(x: torch.Tensor, degrees: float) -> torch.Tensor:
@@ -53,6 +56,7 @@ class Predictor:
         self.flip_perm = P.flip_permutation(self.names)
         self.regions = P.from_config(self.cfg)[1]
         self.thresholds = self._load_thresholds(checkpoints)
+        self.crop_thresholds = self._load_crop_thresholds(checkpoints)
 
     def _load_thresholds(self, checkpoints) -> np.ndarray:
         """Пороги видимости, откалиброванные на OOF; иначе общий порог из конфига."""
@@ -62,6 +66,24 @@ class Predictor:
             return np.full(len(self.names), default)
         series = pd.read_csv(path, index_col=0).iloc[:, 0]
         return np.array([float(series.get(n, default)) for n in self.names])
+
+    def _load_crop_thresholds(self, checkpoints) -> np.ndarray:
+        """Пороги семантических кропов; full-frame пороги — безопасный fallback."""
+        path = Path(checkpoints[0]).parent / "thresholds_crop.csv"
+        if not path.exists():
+            return self.thresholds.copy()
+        table = pd.read_csv(path)
+        if {"name", "threshold"} <= set(table.columns):
+            if "fold" in table.columns and len(checkpoints) == 1:
+                fold = int(Path(checkpoints[0]).stem.removeprefix("fold"))
+                own = table[table["fold"] == fold]
+                if len(own):
+                    table = own
+            series = table.groupby("name")["threshold"].mean()
+        else:
+            series = pd.read_csv(path, index_col=0).iloc[:, 0]
+        return np.array([float(series.get(n, self.thresholds[i]))
+                         for i, n in enumerate(self.names)])
 
     @torch.no_grad()
     def heatmaps(self, image: np.ndarray) -> torch.Tensor:
@@ -77,6 +99,11 @@ class Predictor:
                 acc = acc + torch.flip(flipped, dims=[3])[:, self.flip_perm]
                 n += 1
         return (acc / n)[0]
+
+    def heatmaps_tta(self, image: np.ndarray) -> np.ndarray:
+        """TTA-карты в координатах непаддированного входного изображения."""
+        h = mask_outside(self.heatmaps(image)[None], image.shape)[0]
+        return h[:, :image.shape[0], :image.shape[1]].cpu().numpy()
 
     def predict(self, image: np.ndarray, chain: bool | None = None) -> dict:
         """chain — согласовать позвоночник по структуре; None — как в конфиге (infer.spine_chain)."""
@@ -110,6 +137,22 @@ class Predictor:
             "region": region if visible[self.regions[region]].any() else "out_of_scope",
         }
 
+    def predict_multicrop(self, image: np.ndarray, config: dict | None = None) -> dict:
+        """Позвоночник по перекрывающимся полосам с проверкой цепочек."""
+        from .multicrop import predict_multicrop, predict_semantic
+        cfg = config
+        if cfg is None:
+            cfg = self.cfg.get("infer", {}).get("multicrop", {})
+        if cfg.get("mode") == "semantic" or cfg.get("version") == "semantic-v2":
+            semantic_cfg = cfg.get("config") if isinstance(cfg, dict) else None
+            return predict_semantic(self, image, semantic_cfg)
+        return predict_multicrop(self, image, cfg)
+
+    def predict_semantic(self, image: np.ndarray,
+                         config: dict | str | Path | None = None) -> dict:
+        from .multicrop import predict_semantic
+        return predict_semantic(self, image, config)
+
 
 def fold_checkpoints(run_dir: str | Path | None = None,
                      folds: list[int] | None = None) -> list[Path]:
@@ -119,7 +162,10 @@ def fold_checkpoints(run_dir: str | Path | None = None,
     расписание, история), в ансамбль оно не идёт: там веса последней эпохи, а
     не лучшей.
     """
-    d = Path(run_dir) if run_dir is not None else RUN_DIR
+    if run_dir is not None:
+        d = Path(run_dir)
+    else:
+        d = RUN_DIR if any(RUN_DIR.glob("fold[0-9].pt")) else LEGACY_RUN_DIR
     ckpts = sorted(p for p in d.glob("fold*.pt") if not p.name.endswith("_last.pt"))
     if folds is not None:
         ckpts = [p for p in ckpts if p.stem in {f"fold{k}" for k in folds}]

@@ -73,8 +73,9 @@ JOBS_DIR = Path(tempfile.gettempdir()) / 'dxa_qc_jobs'
 def analyzer() -> Analyzer:
     """Модели грузятся один раз на процесс: чтение весов дороже самого анализа.
 
-    DXA_QC_KEYPOINTS=1 подключает модель ключевых точек (нужен torch и веса в
-    runs/keypoints). DXA_QC_CNN=0 выключает нейросетевое второе мнение
+    DXA_QC_KEYPOINTS=1 подключает диагностические точки. Отдельные переменные
+    DXA_QC_KEYPOINTS_MULTICROP=1 и DXA_QC_KEYPOINTS_VERDICT=1 включают
+    экспериментальную нарезку и разрешают подмену контура. DXA_QC_CNN=0 выключает
     (cnn_qc) — вердикт тогда выносит одна геометрия. Переменной окружения, а
     не параметра запроса: веса читаются при старте процесса, переключать
     измеритель между запросами нечестно — отчёты станут несравнимы между собой.
@@ -82,8 +83,18 @@ def analyzer() -> Analyzer:
     global _analyzer
     with _lock:
         if _analyzer is None:
+            kp_enabled = any(
+                os.environ.get(name, '') not in ('', '0', 'false')
+                for name in ('DXA_QC_KEYPOINTS', 'DXA_QC_KEYPOINTS_MULTICROP',
+                             'DXA_QC_KEYPOINTS_VERDICT')
+            )
             _analyzer = Analyzer.load(
-                keypoints=os.environ.get('DXA_QC_KEYPOINTS', '') not in ('', '0', 'false'),
+                keypoints=kp_enabled,
+                keypoints_dir=os.environ.get('DXA_QC_KEYPOINTS_DIR') or None,
+                keypoints_multicrop=os.environ.get(
+                    'DXA_QC_KEYPOINTS_MULTICROP', '') not in ('', '0', 'false'),
+                keypoints_verdict=os.environ.get(
+                    'DXA_QC_KEYPOINTS_VERDICT', '') not in ('', '0', 'false'),
                 cnn=os.environ.get('DXA_QC_CNN', '1') not in ('0', 'false'),
                 roi_rule=os.environ.get('DXA_QC_ROI_RULE', 'scan_length'))
     return _analyzer

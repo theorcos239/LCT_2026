@@ -28,12 +28,128 @@ import trainset
 from . import appearance as app
 from . import probability as prob
 from .criteria import (DEFAULTS, artifact_structures, axis, axis_is_straight,
-                       iliac_masses, top_margin_mm)
+                       axis_decision, iliac_masses, top_margin_mm)
 from .geometry import spine_column
 
 HERE = Path(__file__).resolve().parent
 THRESHOLDS = HERE / 'thresholds.json'
 METRICS = HERE / 'metrics.json'
+
+
+def _axis_fused(args) -> int:
+    """Вложенный OOF-подбор дисперсий исправленного угла по модели точек."""
+    from dxa_qc.spine_shape import (curve_descriptors, fused_tilt,
+                                    source_variances, tilt_sources)
+    z = np.load(args.axis_oof, allow_pickle=True)
+    names = list(z['names'])
+    thresholds = np.asarray(z['thresholds'])
+    m = pd.read_csv(HERE / 'measurements.csv').set_index('study')
+    rows = []
+    for i, region in enumerate(z['regions']):
+        study = str(z['studies'][i])
+        if str(region) != 'spine' or study not in m.index:
+            continue
+        th = thresholds[i] if thresholds.ndim == 2 else thresholds
+        visible = np.asarray(z['conf'][i]) >= th
+        contour = m.loc[study]
+        contour_dict = {'angle_deg': contour.angle_deg,
+                        'curvature_mm': contour.curvature_mm}
+        src = tilt_sources(z['pred'][i], visible, names, .6, contour_dict,
+                           z['conf'][i])
+        curve = curve_descriptors(z['pred'][i], visible, names, .6)
+        if not curve.get('available'):
+            continue
+        rows.append({'study': study, 'fold': int(contour.fold),
+                     'y': int(contour.y_axis),
+                     'scoliosis': 'колиоз' in str(contour.comment).lower(),
+                     'src': src, 'curve': curve,
+                     'contour_curvature_mm': float(contour.curvature_mm)})
+    if not rows:
+        raise ValueError(f'{args.axis_oof}: нет сопоставимых spine-строк')
+
+    grid = []
+    for bc in (.5, 1., 2.):
+        for be in (.5, 1., 2.):
+            for bk in (.5, 1., 2.):
+                for k in (0., .5, 1.):
+                    grid.append({'b_c': bc, 'b_e': be, 'b_k': bk,
+                                 'b_r': 1., 'tau': 1.5, 'uncertainty_k': k})
+
+    def predict(indices, params):
+        pred, state, angle = [], [], []
+        for i in indices:
+            row = rows[i]
+            variance = source_variances(
+                row['src'], row['curve'],
+                {**params, 'contour_curvature_mm': row['contour_curvature_mm']})
+            fused = fused_tilt(row['src'], variance)
+            dec = axis_decision(fused['theta_fused_deg'], fused['sigma_deg'],
+                                fused['Q'], fused['n_sources'],
+                                {'uncertainty_k': params['uncertainty_k']})
+            pred.append(dec['state'] == 'unsuitable')
+            state.append(dec['state'])
+            angle.append(fused['theta_fused_deg'])
+        return np.asarray(pred, int), np.asarray(state), np.asarray(angle, float)
+
+    folds = sorted({r['fold'] for r in rows})
+    oof_pred = np.zeros(len(rows), int)
+    oof_state = np.full(len(rows), '', object)
+    chosen = []
+    for fold in folds:
+        train = np.array([i for i, r in enumerate(rows) if r['fold'] != fold])
+        test = np.array([i for i, r in enumerate(rows) if r['fold'] == fold])
+        best = None
+        ytr = np.asarray([rows[i]['y'] for i in train])
+        for params in grid:
+            pred, state, _ = predict(train, params)
+            c = stats.confusion(ytr, pred)
+            und = float(np.mean(state == 'undetermined'))
+            score = (c['f1'], -c['fn'], -und)
+            if und <= .15 and (best is None or score > best[0]):
+                best = (score, params)
+        if best is None:
+            best = ((-1, 0, 0), {'b_c': 1., 'b_e': 1., 'b_k': 1.,
+                                  'b_r': 1., 'tau': 1.5, 'uncertainty_k': 0.})
+        chosen.append(best[1])
+        oof_pred[test], oof_state[test], _ = predict(test, best[1])
+
+    y = np.asarray([r['y'] for r in rows])
+    scoliosis = np.asarray([r['scoliosis'] for r in rows])
+    c = stats.confusion(y, oof_pred)
+    center_bad = np.asarray([
+        abs(float(r['src']['theta_centers_deg'])) > 5
+        if r['src']['theta_centers_deg'] is not None else False for r in rows
+    ])
+    full_idx = np.arange(len(rows))
+    runtime_best = None
+    for params in grid:
+        pred, state, _ = predict(full_idx, params)
+        cm = stats.confusion(y, pred)
+        und = float(np.mean(state == 'undetermined'))
+        score = (cm['f1'], -cm['fn'], -und)
+        if und <= .15 and (runtime_best is None or score > runtime_best[0]):
+            runtime_best = (score, params)
+    runtime_params = (runtime_best[1] if runtime_best else
+                      {'b_c': 1., 'b_e': 1., 'b_k': 1., 'b_r': 1.,
+                       'tau': 1.5, 'uncertainty_k': 0.})
+    result = {
+        **{key: c[key] for key in ('tp', 'fp', 'fn', 'sensitivity', 'specificity', 'f1')},
+        'n': len(rows), 'undetermined_fraction': float(np.mean(oof_state == 'undetermined')),
+        'scoliosis_fp_centers': int(np.sum(center_bad & scoliosis & (y == 0))),
+        'scoliosis_fp_fused': int(np.sum((oof_pred == 1) & scoliosis & (y == 0))),
+        'fold_params': chosen,
+        'runtime_params': runtime_params,
+    }
+    print('OOF исправленного угла:', json.dumps(result, ensure_ascii=False, indent=2))
+    passed = (result['f1'] > .33 and result['undetermined_fraction'] <= .15
+              and result['fn'] <= 1
+              and result['scoliosis_fp_fused']
+              <= .5 * max(result['scoliosis_fp_centers'], 1))
+    result['gate_passed'] = bool(passed)
+    out = Path(args.axis_out)
+    out.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
+    print(f'G2: {"ПРОЙДЕН" if passed else "НЕ ПРОЙДЕН"}; {out}')
+    return 0
 
 # Как критерий превращается в вердикт.
 #
@@ -300,7 +416,13 @@ def main() -> int:
     ap.add_argument('--sweep', action='store_true', help='таблица всех правил свёртки')
     ap.add_argument('--probability-only', action='store_true',
                     help='перекалибровать только вероятности; пороги и модель вида не трогать')
+    ap.add_argument('--axis-fused', action='store_true',
+                    help='оценить исправленный угол по OOF модели точек')
+    ap.add_argument('--axis-oof', default='runs/keypoints_crops/oof.npz')
+    ap.add_argument('--axis-out', default='runs/keypoints_crops/metrics_axis_fused.json')
     args = ap.parse_args()
+    if args.axis_fused:
+        return _axis_fused(args)
 
     df = trainset.frames('spine')
     print(f'{len(df)} кадров позвоночника, {df.study.nunique()} исследований')

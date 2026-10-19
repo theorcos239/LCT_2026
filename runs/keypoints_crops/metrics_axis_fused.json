@@ -1,0 +1,55 @@
+{
+  "tp": 3,
+  "fp": 4,
+  "fn": 4,
+  "sensitivity": 0.42857142857142855,
+  "specificity": 0.9215686274509803,
+  "f1": 0.42857142857142855,
+  "n": 58,
+  "undetermined_fraction": 0.06896551724137931,
+  "scoliosis_fp_centers": 4,
+  "scoliosis_fp_fused": 2,
+  "fold_params": [
+    {
+      "b_c": 1.0,
+      "b_e": 0.5,
+      "b_k": 0.5,
+      "b_r": 1.0,
+      "tau": 1.5,
+      "uncertainty_k": 0.5
+    },
+    {
+      "b_c": 1.0,
+      "b_e": 0.5,
+      "b_k": 0.5,
+      "b_r": 1.0,
+      "tau": 1.5,
+      "uncertainty_k": 0.5
+    },
+    {
+      "b_c": 1.0,
+      "b_e": 1.0,
+      "b_k": 0.5,
+      "b_r": 1.0,
+      "tau": 1.5,
+      "uncertainty_k": 1.0
+    },
+    {
+      "b_c": 2.0,
+      "b_e": 0.5,
+      "b_k": 0.5,
+      "b_r": 1.0,
+      "tau": 1.5,
+      "uncertainty_k": 0.5
+    }
+  ],
+  "runtime_params": {
+    "b_c": 1.0,
+    "b_e": 1.0,
+    "b_k": 0.5,
+    "b_r": 1.0,
+    "tau": 1.5,
+    "uncertainty_k": 1.0
+  },
+  "gate_passed": false
+}

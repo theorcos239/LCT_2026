@@ -286,7 +286,7 @@ def test_keypoints() -> None:
           all(r['processing_status'] == 'Success' for r in rows)
           and any('keypoints:unavailable' in r['flags'] for r in rows))
 
-    a = Analyzer.load(keypoints=True)
+    a = Analyzer.load(keypoints=True, keypoints_verdict=True)
     if a.keypoints is None or not a.keypoints.available:
         check('модель точек (пропущено: веса или torch недоступны)', True)
         return
@@ -302,9 +302,15 @@ def test_keypoints() -> None:
     check('измерения по точкам попали в детали', bool(kp_rows))
     spine = [r for r in rows if r['anatomical_region'] == 'spine']
     hip = [r for r in rows if r['anatomical_region'] in ('lh', 'rh')]
-    check('у позвоночника ось посчитана точками',
-          all(r['details']['spine']['axis'].get('source') == 'keypoints' for r in spine),
-          f'кадров {len(spine)}')
+    if a.keypoints.axis_gate_passed:
+        check('у позвоночника ось посчитана точками после OOF-гейта',
+              all(r['details']['spine']['axis'].get('source') == 'keypoints_fused'
+                  for r in spine), f'кадров {len(spine)}')
+    else:
+        check('не прошедший OOF-гейт угол остался диагностическим',
+              all(r['details']['spine']['axis'].get('source') != 'keypoints_fused'
+                  and r['details']['keypoints'].get('axis_diagnostic') is not None
+                  for r in spine), f'кадров {len(spine)}')
     check('у бедра отступы посчитаны точками и контур сохранён',
           all(r['details']['hip_roi']['method'] == 'keypoints'
               and 'hip_roi_contour' in r['details'] for r in hip),

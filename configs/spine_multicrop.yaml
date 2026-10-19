@@ -1,0 +1,249 @@
+version: semantic-v2
+source:
+  format: dxa-crops-v1
+  confirmed_spine_crops: 359
+specs:
+  t12_l1:
+    rank: 0
+    n_crops: 89
+    output:
+    - th12_bottom
+    - l1_center
+    - disc_th12_l1
+    - disc_l1_l2
+    - l1_edge_right
+    - l1_edge_left
+    context:
+    - l2_center
+    - l2_edge_right
+    - l2_edge_left
+    forbidden:
+    - th12_top
+    - l3_center
+    - l4_center
+    - iliac_right
+    - iliac_left
+    - disc_l2_l3
+    - disc_l3_l4
+    - disc_l4_l5
+    - l3_edge_right
+    - l3_edge_left
+    - l4_edge_right
+    - l4_edge_left
+    frequencies:
+      th12_top: 0.3258
+      th12_bottom: 0.9438
+      l1_center: 1.0
+      l2_center: 0.5506
+      l3_center: 0.0
+      l4_center: 0.0
+      iliac_right: 0.0
+      iliac_left: 0.0
+      disc_th12_l1: 0.9775
+      disc_l1_l2: 0.9888
+      disc_l2_l3: 0.1011
+      disc_l3_l4: 0.0
+      disc_l4_l5: 0.0
+      l1_edge_right: 1.0
+      l1_edge_left: 1.0
+      l2_edge_right: 0.5618
+      l2_edge_left: 0.5618
+      l3_edge_right: 0.0
+      l3_edge_left: 0.0
+      l4_edge_right: 0.0
+      l4_edge_left: 0.0
+    window_t:
+      p25:
+      - -1.421
+      - 0.63
+      p50:
+      - -1.217
+      - 1.118
+      p75:
+      - -0.886
+      - 1.242
+  l1_l2:
+    rank: 1
+    n_crops: 89
+    output:
+    - l1_center
+    - l2_center
+    - disc_th12_l1
+    - disc_l1_l2
+    - disc_l2_l3
+    - l1_edge_right
+    - l1_edge_left
+    - l2_edge_right
+    - l2_edge_left
+    context: []
+    forbidden:
+    - th12_top
+    - th12_bottom
+    - l3_center
+    - l4_center
+    - iliac_right
+    - iliac_left
+    - disc_l3_l4
+    - disc_l4_l5
+    - l3_edge_right
+    - l3_edge_left
+    - l4_edge_right
+    - l4_edge_left
+    frequencies:
+      th12_top: 0.0
+      th12_bottom: 0.0112
+      l1_center: 0.9663
+      l2_center: 1.0
+      l3_center: 0.0449
+      l4_center: 0.0
+      iliac_right: 0.0
+      iliac_left: 0.0
+      disc_th12_l1: 0.9551
+      disc_l1_l2: 0.9775
+      disc_l2_l3: 1.0
+      disc_l3_l4: 0.0337
+      disc_l4_l5: 0.0
+      l1_edge_right: 0.9663
+      l1_edge_left: 0.9663
+      l2_edge_right: 1.0
+      l2_edge_left: 1.0
+      l3_edge_right: 0.0449
+      l3_edge_left: 0.0449
+      l4_edge_right: 0.0
+      l4_edge_left: 0.0
+    window_t:
+      p25:
+      - -0.512
+      - 1.548
+      p50:
+      - -0.469
+      - 1.594
+      p75:
+      - -0.428
+      - 1.666
+  l2_l3:
+    rank: 2
+    n_crops: 89
+    output:
+    - l2_center
+    - l3_center
+    - disc_l1_l2
+    - disc_l2_l3
+    - disc_l3_l4
+    - l2_edge_right
+    - l2_edge_left
+    - l3_edge_right
+    - l3_edge_left
+    context: []
+    forbidden:
+    - th12_top
+    - th12_bottom
+    - l1_center
+    - l4_center
+    - iliac_right
+    - iliac_left
+    - disc_th12_l1
+    - disc_l4_l5
+    - l1_edge_right
+    - l1_edge_left
+    - l4_edge_right
+    - l4_edge_left
+    frequencies:
+      th12_top: 0.0
+      th12_bottom: 0.0
+      l1_center: 0.0
+      l2_center: 0.9775
+      l3_center: 1.0
+      l4_center: 0.0225
+      iliac_right: 0.0112
+      iliac_left: 0.0225
+      disc_th12_l1: 0.0
+      disc_l1_l2: 0.9326
+      disc_l2_l3: 0.9888
+      disc_l3_l4: 0.9888
+      disc_l4_l5: 0.0225
+      l1_edge_right: 0.0
+      l1_edge_left: 0.0
+      l2_edge_right: 0.9775
+      l2_edge_left: 0.9775
+      l3_edge_right: 1.0
+      l3_edge_left: 1.0
+      l4_edge_right: 0.0225
+      l4_edge_left: 0.0225
+    window_t:
+      p25:
+      - 0.291
+      - 2.57
+      p50:
+      - 0.355
+      - 2.632
+      p75:
+      - 0.405
+      - 2.686
+  l3_l4:
+    rank: 3
+    n_crops: 92
+    output:
+    - l3_center
+    - l4_center
+    - iliac_right
+    - iliac_left
+    - disc_l2_l3
+    - disc_l3_l4
+    - disc_l4_l5
+    - l3_edge_right
+    - l3_edge_left
+    - l4_edge_right
+    - l4_edge_left
+    context: []
+    forbidden:
+    - th12_top
+    - th12_bottom
+    - l1_center
+    - l2_center
+    - disc_th12_l1
+    - disc_l1_l2
+    - l1_edge_right
+    - l1_edge_left
+    - l2_edge_right
+    - l2_edge_left
+    frequencies:
+      th12_top: 0.0
+      th12_bottom: 0.0
+      l1_center: 0.0
+      l2_center: 0.0109
+      l3_center: 1.0
+      l4_center: 0.9783
+      iliac_right: 0.9022
+      iliac_left: 0.9457
+      disc_th12_l1: 0.0
+      disc_l1_l2: 0.0
+      disc_l2_l3: 0.9891
+      disc_l3_l4: 0.9891
+      disc_l4_l5: 0.9565
+      l1_edge_right: 0.0
+      l1_edge_left: 0.0
+      l2_edge_right: 0.0109
+      l2_edge_left: 0.0109
+      l3_edge_right: 1.0
+      l3_edge_left: 1.0
+      l4_edge_right: 0.9891
+      l4_edge_left: 0.9891
+    window_t:
+      p25:
+      - 1.238
+      - 4.168
+      p50:
+      - 1.29
+      - 4.419
+      p75:
+      - 1.36
+      - 4.716
+refine_radius_step: 0.5
+center_max_shift_step: 0.25
+edge_margin_px: 10
+min_crop_px: 96
+disagree_mm: 6.0
+anchor:
+  step_ratio_max: 1.6
+  chain_gap_min: 0.0

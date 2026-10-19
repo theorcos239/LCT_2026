@@ -57,9 +57,49 @@ DEFAULTS = {
     'appearance': 0.5,              # порог вероятности у модели вида кадра
 }
 
+AXIS_FUSED_DEFAULTS = {
+    'limit_deg': 5.0,
+    'uncertainty_k': 1.0,
+    'chi2_max': 9.21,
+    'min_sources': 2,
+}
+
 
 def _verdict(violated: bool | None, text: str) -> dict:
     return {'violated': violated, 'text': text}
+
+
+def axis_decision(theta_deg: float | None, sigma_deg: float | None,
+                  q: float | None, n_sources: int,
+                  params: dict | None = None,
+                  reasons: list[str] | None = None) -> dict:
+    """Решение относительно фиксированного порога 5° с учётом погрешности."""
+    p = {**AXIS_FUSED_DEFAULTS, **(params or {})}
+    why = list(reasons or [])
+    if theta_deg is None or sigma_deg is None or n_sources < int(p['min_sources']):
+        why.append('sources_missing')
+        state = 'undetermined'
+    elif q is not None and q > float(p['chi2_max']):
+        why.append('sources_disagree')
+        state = 'undetermined'
+    else:
+        lo = abs(float(theta_deg)) - float(p['uncertainty_k']) * float(sigma_deg)
+        hi = abs(float(theta_deg)) + float(p['uncertainty_k']) * float(sigma_deg)
+        if hi < float(p['limit_deg']):
+            state = 'suitable'
+        elif lo > float(p['limit_deg']):
+            state = 'unsuitable'
+        else:
+            why.append('borderline')
+            state = 'undetermined'
+    violated = True if state == 'unsuitable' else (False if state == 'suitable' else None)
+    text = (f'ось позвоночника отклонена на {abs(float(theta_deg)):.1f}° '
+            f'(допустимо {float(p["limit_deg"]):.0f}°)'
+            if violated else '')
+    return {
+        'state': state, 'violated': violated, 'text': text, 'reasons': why,
+        'threshold_deg': float(p['limit_deg']),
+    }
 
 
 # --------------------------------------------------------------------------- #

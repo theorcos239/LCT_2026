@@ -1,0 +1,4 @@
+variant,level_error_frames_raw,level_error_frames,spine_p90_mm,axis_median_deg,axis_p90_deg,endplate_p90_deg,abstain_frames,accepted_spine_frames,coverage,checks,gate_passed
+full_frame,10,10,10.13507843017578,0.3743605613708496,1.2463060438632965,1.8721546696282758,0,72,1.0,,True
+semantic_oracle,10,5,20.46705661804105,0.3659472444475145,1.2068416652753482,2.157519400829462,12,61,0.8356164383561644,"{""levels"": true, ""localization"": false, ""axis"": true, ""endplates"": false, ""coverage"": true}",False
+semantic_auto,10,4,10.135073843673185,0.3745684714227399,1.1761016457596984,2.227317631726255,14,59,0.8082191780821918,"{""levels"": true, ""localization"": true, ""axis"": true, ""endplates"": false, ""coverage"": true}",False

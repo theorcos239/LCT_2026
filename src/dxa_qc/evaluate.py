@@ -26,6 +26,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 import numpy as np
@@ -41,7 +42,7 @@ from .pack import ABSENT, LABELED
 from .transforms import inside_frame
 
 CENTERS = [f"l{i}_center" for i in range(1, 5)]
-KEYS = ("pred", "conf", "true", "visible", "labeled", "index")
+KEYS = ("pred", "conf", "true", "visible", "labeled", "index", "abstain")
 
 
 def fold_frames(data: dict, val_idx, crops: int = 6, seed: int = 0) -> tuple[list, list]:
@@ -54,28 +55,44 @@ def fold_frames(data: dict, val_idx, crops: int = 6, seed: int = 0) -> tuple[lis
     for j in val_idx:
         st = data["state"][j]
         orig.append((np.asarray(data["images"][j]), data["coords"][j], st == LABELED,
-                     (st == LABELED) | (st == ABSENT), int(j)))
+                     (st == LABELED) | (st == ABSENT), int(j), str(data["regions"][j])))
     td = TruncatedDataset(data, val_idx, crops, seed=seed)
     for i in range(len(td)):
         image, coords, st, valid, j = td.raw(i)
         trunc.append((image, coords, (st == LABELED) & inside_frame(coords, valid),
-                      (st == LABELED) | (st == ABSENT), int(j)))
+                      (st == LABELED) | (st == ABSENT), int(j), str(data["regions"][j])))
     return orig, trunc
 
 
-def predict_frames(predictor: Predictor, frames: list, chain: bool = True) -> dict:
+def predict_frames(predictor: Predictor, frames: list, chain: bool = True,
+                   multicrop: str = "off", oracle_items: dict | None = None,
+                   image_ids: np.ndarray | None = None) -> dict:
     out = {k: [] for k in KEYS}
-    for image, coords, vis, lab, j in frames:
-        r = predictor.predict(np.clip(image, 0, 255).astype(np.uint8), chain=chain)
+    for image, coords, vis, lab, j, region in frames:
+        image_u8 = np.clip(image, 0, 255).astype(np.uint8)
+        if region == "spine" and multicrop == "v1":
+            r = predictor.predict_multicrop(image_u8, {"mode": "v1"})
+        elif region == "spine" and multicrop == "auto":
+            r = predictor.predict_semantic(image_u8)
+        elif region == "spine" and multicrop == "oracle":
+            from .multicrop import predict_oracle_semantic
+            uid = str(image_ids[j]) if image_ids is not None else ""
+            r = predict_oracle_semantic(predictor, image_u8,
+                                        (oracle_items or {}).get(uid, []))
+        else:
+            r = predictor.predict(image_u8, chain=chain)
         for k, v in (("pred", r["coords"]), ("conf", r["confidence"]), ("true", coords),
-                     ("visible", vis), ("labeled", lab), ("index", j)):
+                     ("visible", vis), ("labeled", lab), ("index", j),
+                     ("abstain", bool((r.get("multicrop") or {}).get("abstain")))):
             out[k].append(v)
     return {k: np.array(v) for k, v in out.items()}
 
 
 def fold_oof(run_dir: str | Path, data: dict, device: torch.device | str,
              crops: int = 6, folds: list[int] | None = None,
-             thresholds: np.ndarray | dict[int, np.ndarray] | None = None) -> list[dict]:
+             thresholds: np.ndarray | dict[int, np.ndarray] | None = None,
+             multicrop: str = "off",
+             crop_annotations: str | Path = "Разметка.json") -> list[dict]:
     """По каждому фолду — предсказания рабочего инференса на его отложенных кадрах.
 
     orig — исходные кадры, orig_indep — они же без цепочки позвоночника,
@@ -86,6 +103,13 @@ def fold_oof(run_dir: str | Path, data: dict, device: torch.device | str,
 
     studies = np.array(data["studies"])
     result = []
+    oracle_items = None
+    if multicrop == "oracle":
+        raw = json.loads(Path(crop_annotations).read_text(encoding="utf-8"))
+        oracle_items = {}
+        for item in raw.get("crops", []):
+            if item.get("status") == "confirmed" and item.get("region") == "spine":
+                oracle_items.setdefault(str(item["image_id"]), []).append(item)
     for path in fold_checkpoints(run_dir, folds):
         fold = int(path.stem.removeprefix("fold"))
         predictor = Predictor([path], str(device))
@@ -99,7 +123,9 @@ def fold_oof(run_dir: str | Path, data: dict, device: torch.device | str,
         orig, trunc = fold_frames(data, val_idx, crops)
         result.append({"fold": fold, "config": cfg,
                        "thresholds": predictor.thresholds.copy(),
-                       "orig": predict_frames(predictor, orig),
+                       "orig": predict_frames(predictor, orig, multicrop=multicrop,
+                                              oracle_items=oracle_items,
+                                              image_ids=np.asarray(data["ids"])),
                        "orig_indep": predict_frames(predictor, orig, chain=False),
                        "trunc": predict_frames(predictor, trunc, chain=False)})
     if not result:
@@ -200,6 +226,15 @@ def summarize(run_dir: str | Path, data: dict, folds: list[dict],
                     f"level_err_frames_{tag}": int(levels.any_shift.sum())})
         if tag == "chain":
             lv = levels
+            spine_rows = regions[orig["index"]] == "spine"
+            out["multicrop_abstain_frames"] = int(
+                np.asarray(orig["abstain"], bool)[spine_rows].sum())
+            accepted_levels = levels[
+                ~np.asarray(orig["abstain"], bool)[levels["row"].to_numpy(dtype=int)]
+            ]
+            out["level_err_frames_after_abstain"] = int(accepted_levels.any_shift.sum())
+            out["spine_frames_after_abstain"] = int(spine_rows.sum() -
+                                                     out["multicrop_abstain_frames"])
             center_cols = [names.index(n) for n in CENTERS]
             active = np.concatenate([
                 f["orig"]["conf"][:, center_cols] >= f["thresholds"][center_cols]
@@ -246,6 +281,8 @@ def main() -> None:
                    help="только эти фолды — для сравнения с недообученным прогоном")
     p.add_argument("--calibrate", action="store_true",
                    help="пересчитать thresholds.csv прогона по рабочему инференсу")
+    p.add_argument("--multicrop", choices=("off", "v1", "oracle", "auto"), default="off",
+                   help="режим multi-crop на исходных spine-кадрах")
     p.add_argument("--out", default=None, help="куда сохранить сводку и таблицы (csv)")
     a = p.parse_args()
     if a.crops < 1:
@@ -260,7 +297,8 @@ def main() -> None:
     if report_dir:
         report_dir.mkdir(parents=True, exist_ok=True)
     for run in a.run:
-        folds = fold_oof(run, data, device, a.crops, folds=a.folds)
+        folds = fold_oof(run, data, device, a.crops, folds=a.folds,
+                         multicrop=a.multicrop)
         if a.calibrate:
             th = calibrate(names, folds)
             th.to_csv(Path(run) / "thresholds.csv")
@@ -273,11 +311,12 @@ def main() -> None:
             default = float(own_cfg.get("infer", {}).get("visibility_threshold", 0.5))
             leave_one_out = crossfit_thresholds(names, folds, objective, default)
             by_fold = {f["fold"]: t for f, t in zip(folds, leave_one_out)}
-            folds = fold_oof(run, data, device, a.crops, folds=a.folds, thresholds=by_fold)
+            folds = fold_oof(run, data, device, a.crops, folds=a.folds,
+                             thresholds=by_fold, multicrop=a.multicrop)
             protocol = "crossfit"
         elif a.calibrate:
             folds = fold_oof(run, data, device, a.crops, folds=a.folds,
-                             thresholds=th.to_numpy())
+                             thresholds=th.to_numpy(), multicrop=a.multicrop)
             protocol = "same_fold_calibrated"
         else:
             protocol = "saved"

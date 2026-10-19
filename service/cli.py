@@ -37,10 +37,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument('--lenient-region', action='store_true',
                     help='оценивать кадры, не принятые фильтром области')
     ap.add_argument('--keypoints', action='store_true',
-                    help='ось позвоночника и отступы ROI считать моделью ключевых '
-                         'точек (нужен torch и веса в runs/keypoints)')
+                    help='подключить диагностические точки (нужен torch и веса)')
     ap.add_argument('--keypoints-dir', type=Path,
-                    help='каталог с весами модели точек (по умолчанию runs/keypoints)')
+                    help='каталог весов (по умолчанию runs/keypoints_crops с fallback)')
+    ap.add_argument('--keypoints-multicrop', action='store_true',
+                    help='эксперимент: точки позвоночника по перекрывающимся полосам')
+    ap.add_argument('--keypoints-verdict', action='store_true',
+                    help='разрешить проверенной модели точек подменять контурный вердикт')
     ap.add_argument('--roi-rule', default='scan_length', choices=('scan_length', 'margins'),
                     help='отступы ROI: длина поля, как оценивает эксперт (по умолчанию), '
                          'или отступы от ориентиров буквально по рисунку 6 ТЗ')
@@ -67,8 +70,11 @@ def main(argv: list[str] | None = None) -> int:
     t0 = time.perf_counter()
     analyzer = Analyzer.load(hip_method=args.hip_method,
                              strict_region=not args.lenient_region,
-                             keypoints=args.keypoints,
+                             keypoints=(args.keypoints or args.keypoints_multicrop
+                                        or args.keypoints_verdict),
                              keypoints_dir=args.keypoints_dir,
+                             keypoints_multicrop=args.keypoints_multicrop,
+                             keypoints_verdict=args.keypoints_verdict,
                              cnn=not args.no_cnn, roi_rule=args.roi_rule)
     if args.keypoints and analyzer.keypoints is not None and not analyzer.keypoints.available:
         print(f'модель точек не загружена: {analyzer.keypoints.error}\n'
