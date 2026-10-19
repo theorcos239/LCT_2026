@@ -37,9 +37,11 @@
 - **Гребни подвздошных (часть укладки).** Каналы `iliac_right/left` остаются
   диагностикой: нарушений укладки в эталоне шесть, на фолдах 0–1 — два,
   переводить вердикт гребней на них нельзя. Вердикт гребней — за `spine_qc`.
-- **Верхняя граница укладки (половина тела Th12) не проверяется.** Разметки
-  уровня Th12 в данных нет, проверять правило не на чем. Запас кадра сверху
-  считается и кладётся в отчёт как диагностика, но в вердикт не входит.
+- **Половина тела Th12 (вторая часть укладки ТЗ).** Контурный
+  `top_margin_mm` это не измерял (порог OOF = 0). По точкам
+  `th12_top` / `th12_bottom` и шагу L1–L2 считается доля видимого тела;
+  при `frac < 0.5` укладка нарушена. На OOF `keypoints_crops` согласие с
+  геометрией разметки точек F1 ≈ 0.93. Гребни и Th12 в вердикте — через OR.
 - **Артефакты.** Канала под посторонние предметы в модели нет и не
   планировалось: это отдельная задача и отдельная модель.
 
@@ -344,6 +346,184 @@ def bulge_from_points(get) -> dict | None:
             'source': 'keypoints', 'verdict': None}
 
 
+# Высота тела Th12 / шаг L1–L2 по 29 кадрам с обоими краями в pack (медиана 0.95).
+# В structure.py для полосы декодера заложено ~0.8 — там допуск, здесь калибр покрытия.
+TH12_BODY_TO_STEP = 0.95
+TH12_HALF_FRAC = 0.5          # ТЗ: видна не меньше половины тела Th12
+# Hard-reject только при видимом th12_bottom и очень малом frac.
+# Сетка 0.05–0.50 на 92 live-кадрах (Processing/eval_th12_full/hard_frac_sweep_live.csv):
+# плато expert F1=0.80 / GT precision=1.0 при hard∈[0.05, 0.13]; выше 0.13
+# появляется 2-й FP vs эксперту. Берём правый край плато.
+TH12_HARD_FRAC = 0.13
+TH12_BORDER_FRAC = 0.05
+# Медиана |th12_bottom.y − th12_top.y| на pack, px — если L1/L2 не видимы.
+TH12_BODY_PRIOR_PX = 38.0
+
+
+def th12_coverage_from_points(
+    get,
+    image_height: int,
+    body_to_step: float = TH12_BODY_TO_STEP,
+    half_frac: float = TH12_HALF_FRAC,
+    hard_frac: float = TH12_HARD_FRAC,
+    border: float = TH12_BORDER_FRAC,
+    body_prior_px: float = TH12_BODY_PRIOR_PX,
+) -> dict:
+    """Доля тела Th12 в кадре по ключевым точкам (верхняя граница укладки ТЗ).
+
+    Двухпороговое правило (ТЗ закрыт, F1 по эксперту не роняем):
+      * suitable — оба края или frac ≥ half_frac (0.5);
+      * unsuitable (hard → spine_position) — виден th12_bottom и frac < hard_frac;
+      * undetermined (review) — bottom_missing, mid-band [hard, half), prior, граница.
+    Hard только когда нижняя замыкательная в кадре: иначе модель часто
+    «не видит» точку на нормальных кадрах и даёт ложные срабатывания.
+    """
+    del image_height  # API стабилен; y=0 — верх того же массива, что у get().
+    top, bot = get('th12_top'), get('th12_bottom')
+    l1, l2 = get('l1_center'), get('l2_center')
+    disc = get('disc_th12_l1')
+
+    body_meas = (abs(float(bot[1]) - float(top[1]))
+                 if top is not None and bot is not None else None)
+    step = (float(np.linalg.norm(np.asarray(l2, float) - np.asarray(l1, float)))
+            if l1 is not None and l2 is not None else None)
+    body_source = 'measured'
+    if body_meas is not None:
+        body_est = body_meas
+    elif step is not None and step > 1:
+        body_est = body_to_step * step
+        body_source = 'l1_l2_step'
+    elif body_prior_px and body_prior_px > 1:
+        body_est = float(body_prior_px)
+        body_source = 'prior'
+    else:
+        body_est = None
+        body_source = 'none'
+
+    flags: list[str] = []
+    if top is not None and bot is None:
+        return {
+            'state': 'undetermined', 'violated': None, 'frac': None,
+            'reason': 'top_without_bottom', 'needs_review': True,
+            'flags': ['position:th12_undetermined'],
+            'text': '', 'source': 'keypoints', 'body_source': body_source,
+            'body_est_px': None if body_est is None else round(float(body_est), 1),
+            'visible_px': None, 'half_frac': half_frac, 'hard_frac': hard_frac,
+            'body_to_step': body_to_step,
+        }
+    if body_est is None or body_est <= 1:
+        return {
+            'state': 'undetermined', 'violated': None, 'frac': None,
+            'reason': 'body_height_unknown', 'needs_review': True,
+            'flags': ['position:th12_undetermined'],
+            'text': '', 'source': 'keypoints', 'body_source': body_source,
+            'body_est_px': None, 'visible_px': None,
+            'half_frac': half_frac, 'hard_frac': hard_frac,
+            'body_to_step': body_to_step,
+        }
+
+    if top is not None and bot is not None:
+        visible_px = float(body_meas)
+        frac = 1.0
+        reason = 'both_endplates'
+    elif bot is not None:
+        visible_px = max(0.0, float(bot[1]))
+        frac = visible_px / float(body_est)
+        reason = 'bottom_only'
+    else:
+        visible_px = 0.0
+        frac = 0.0
+        reason = 'bottom_missing'
+
+    if disc is not None and bot is not None and float(disc[1]) + 1.0 < float(bot[1]):
+        flags.append('position:th12_disc_inconsistent')
+
+    needs_review = False
+    if reason == 'both_endplates' or frac >= half_frac:
+        state, violated = 'suitable', False
+    elif reason == 'bottom_missing':
+        # Нет нижней замыкательной: ТЗ не подтверждён, но hard-reject по
+        # «невидимости» даёт десятки FP vs эксперту (ошибка видимости модели).
+        state, violated = 'undetermined', None
+        needs_review = True
+        flags.append('position:th12_bottom_missing')
+    elif body_source == 'prior':
+        state, violated = 'undetermined', None
+        needs_review = True
+        flags.append('position:th12_prior_uncertain')
+    elif frac < hard_frac:
+        state, violated = 'unsuitable', True
+        flags.append('position:th12_short')
+    else:
+        # hard_frac ≤ frac < half_frac: зона ТЗ, без автоматического брака.
+        state, violated = 'undetermined', None
+        needs_review = True
+        flags.append('position:th12_review')
+        if abs(frac - half_frac) <= border:
+            flags.append('position:th12_borderline')
+
+    text = ''
+    if violated:
+        text = (f'укладка: видна малая доля тела Th12 '
+                f'({frac:.0%} при hard-пороге {hard_frac:.0%}, норма ТЗ ≥{half_frac:.0%})')
+    return {
+        'state': state, 'violated': violated, 'frac': round(float(frac), 3),
+        'reason': reason, 'needs_review': needs_review,
+        'flags': flags, 'text': text, 'source': 'keypoints',
+        'body_source': body_source,
+        'body_est_px': round(float(body_est), 1),
+        'visible_px': round(float(visible_px), 1),
+        'half_frac': half_frac, 'hard_frac': hard_frac,
+        'body_to_step': body_to_step,
+    }
+
+
+def apply_th12_to_position(position: dict, th12: dict | None) -> dict:
+    """Вшить Th12 в укладку: hard → OR в spine_position; иначе review-флаги."""
+    if not th12:
+        return position
+    out = {**position, 'th12_coverage': th12}
+    if th12.get('frac') is not None:
+        out['th12_frac'] = th12['frac']
+    flags = list(out.get('flags') or [])
+    for flag in th12.get('flags') or []:
+        if flag not in flags:
+            flags.append(flag)
+
+    if th12.get('violated') is True:
+        out['violated'] = True
+        out['th12_violated'] = True
+        out['th12_needs_review'] = False
+        old = (out.get('text') or '').removeprefix('укладка:').strip()
+        th12_msg = (th12.get('text') or '').removeprefix('укладка:').strip()
+        parts = [p for p in (old, th12_msg) if p]
+        uniq: list[str] = []
+        for part in parts:
+            if part not in uniq:
+                uniq.append(part)
+        out['text'] = ('укладка: ' + '; '.join(uniq)) if uniq else ''
+    elif th12.get('violated') is False:
+        out['th12_violated'] = False
+        out['th12_needs_review'] = False
+    else:
+        out['th12_violated'] = None
+        out['th12_needs_review'] = bool(th12.get('needs_review'))
+        if 'position:th12_undetermined' not in flags and out['th12_needs_review']:
+            flags.append('position:th12_undetermined')
+    out['flags'] = flags
+    return out
+
+
+def record_th12_review(out: dict, position: dict) -> None:
+    """Неуверенное покрытие Th12 → ручной разбор, без ложного spine_position."""
+    if not position.get('th12_needs_review'):
+        return
+    if position.get('violated'):
+        return  # уже брак по гребням или hard-Th12
+    if 'position:th12_needs_review' not in out['flags']:
+        out['flags'].append('position:th12_needs_review')
+    if 'undetermined' not in out['violations']:
+        out['violations'].append('undetermined')
 
 
 # --------------------------------------------------------------------------- #
@@ -478,6 +658,8 @@ class KeypointBackend:
         """Кадр -> измерения по точкам. Вердикт выносится только там, где он проверен.
 
         `axis` и `roi` не None — конвейер берёт их вместо контурных.
+        `th12_coverage` — верхняя граница укладки ТЗ; конвейер OR'ит её в
+        `spine_position` (гребни по-прежнему за контуром).
         `rotation` и `iliac` — всегда только диагностика.
         """
         kp = self.points(px, region)
@@ -501,6 +683,7 @@ class KeypointBackend:
         res = {
             'region_model': kp['region'],
             'axis': None, 'roi': None, 'rotation': None, 'iliac': None,
+            'th12_coverage': None,
             'axis_diagnostic': None, 'roi_diagnostic': None,
             'multicrop': kp.get('multicrop'),
             'points': {n: {'x': round(float(kp['coords'][i][0]), 1),
@@ -527,7 +710,20 @@ class KeypointBackend:
                 flags.append('keypoints:axis_gate_failed')
             res['iliac'] = {side: bool(kp['visible'][idx[f'iliac_{side}']])
                             for side in ('right', 'left') if f'iliac_{side}' in idx}
-
+            # Покрытие Th12 не зависит от axis-gate: контур эту половину ТЗ
+            # не меряет, а геометрическое правило по точкам проверено на OOF.
+            th12 = th12_coverage_from_points(get, int(px.shape[0]))
+            if abstain and th12.get('violated') is not None:
+                th12 = {
+                    **th12,
+                    'state': 'undetermined',
+                    'violated': None,
+                    'flags': list(th12.get('flags') or []) + [
+                        'position:th12_numbering_doubt'],
+                    'text': '',
+                }
+            res['th12_coverage'] = th12
+            flags += [f for f in th12.get('flags') or [] if f not in flags]
         else:
             roi = roi_from_points(get, px.shape, region)
             res['roi_diagnostic'] = roi

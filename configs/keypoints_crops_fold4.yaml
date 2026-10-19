@@ -1,0 +1,95 @@
+seed: 0
+deterministic: true
+data:
+  pack: data/keypoints.npz
+  crops: Processing/dxa-crops.json
+  folds: folds.csv
+  points: full
+  canvas:
+  - 352
+  - 320
+  mm_per_px: 0.6
+  use_clahe: false
+  scale: 1
+model:
+  pretrained: true
+  decoder_channels:
+  - 256
+  - 128
+  - 64
+  - 32
+  - 16
+loss:
+  alpha: 2.0
+  beta: 4.0
+  soft_mask_weight: 0.15
+heatmap:
+  sigma: 2.0
+  decode_window: 11
+augment:
+  enabled: true
+  rotation_deg: 15.0
+  shift_frac: 0.1
+  scale: 0.1
+  brightness: 0.2
+  contrast: 0.2
+  gamma:
+  - 0.8
+  - 1.25
+  noise_std: 4.0
+  blur_sigma: 0.6
+  p_geometric: 0.9
+  p_intensity: 0.7
+  p_hflip_spine: 0.5
+  p_crop: 0.5
+  crop_max_frac: 0.35
+  crop_targeted: 0.6
+  crop_jitter_px: 10.0
+train:
+  folds:
+  - 4
+  epochs: 600
+  batch_size: 16
+  num_workers: 0
+  lr_encoder: 3.0e-05
+  lr_decoder: 0.0003
+  weight_decay: 0.0001
+  warmup_epochs: 5
+  patience: 600
+  checkpoint_every: 50
+  trunc_eval_every: 10
+  ema_decay: 0.999
+  amp: false
+  out_dir: runs/keypoints_crops_fold4
+  init_dir: null
+infer:
+  visibility_threshold: 0.5
+  threshold_objective: balanced
+  tta_rotations:
+  - -5
+  - 0
+  - 5
+  tta_flip_spine: true
+  spine_chain: true
+  spine_chain_mode: hypotheses
+  spine_chain_average: false
+  spine_chain_temperature: 1.0
+  multicrop:
+    enabled: false
+    mode: semantic
+    config: configs/spine_multicrop.yaml
+    include_full_frame: true
+    bands:
+    - - 0.0
+      - 0.38
+    - - 0.13
+      - 0.5
+    - - 0.27
+      - 0.69
+    - - 0.45
+      - 1.0
+    edge_margin_px: 10
+    disagree_mm: 6.0
+    abstain_on_chain_conflict: true
+eval:
+  crops_per_image: 6

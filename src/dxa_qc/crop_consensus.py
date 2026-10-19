@@ -14,13 +14,28 @@ from .multicrop import CENTERS, CropBox, load_semantic_config, map_prediction
 
 # Порог отсева кандидата у верифицированного соседа — треть среднего
 # расстояния между центрами этой пары во врачебной разметке
-# (data/keypoints.npz, 92 снимка позвоночника, 0.6 мм/px): L1–L2 31.18 мм,
-# L2–L3 32.46 мм, L3–L4 33.85 мм.
+# (data/keypoints.npz, 92 снимка позвоночника, 0.6 мм/px): L1–L2 31.184 мм,
+# L2–L3 32.463 мм, L3–L4 33.846 мм. Дублируется в configs/spine_multicrop.yaml.
 NEIGHBOR_EXCLUSION_MM = {
     ("l1_center", "l2_center"): 10.39,
     ("l2_center", "l3_center"): 10.82,
     ("l3_center", "l4_center"): 11.28,
 }
+_PAIR_KEYS = {
+    "l1_l2": ("l1_center", "l2_center"),
+    "l2_l3": ("l2_center", "l3_center"),
+    "l3_l4": ("l3_center", "l4_center"),
+}
+
+
+def neighbor_exclusion_from_config(config: dict | None) -> dict:
+    """Прочитать парные пороги из YAML; иначе — значения по умолчанию."""
+    raw = (config or {}).get("neighbor_exclusion_mm") or {}
+    out = dict(NEIGHBOR_EXCLUSION_MM)
+    for key, pair in _PAIR_KEYS.items():
+        if key in raw:
+            out[pair] = float(raw[key])
+    return out
 
 
 @dataclass(frozen=True)
@@ -210,7 +225,10 @@ def predict_consensus(predictor, image: np.ndarray, config: dict | None = None,
                                                if n not in spec["expected_centers"]],
                             "points": sorted(selected)})
 
-    resolved = resolve_centers(source_points, mm_per_px)
+    resolved = resolve_centers(
+        source_points, mm_per_px,
+        exclusion_mm=neighbor_exclusion_from_config(cfg),
+    )
     coords = np.asarray(anchor["coords"], float).copy()
     confidence = np.asarray(anchor["confidence"], float).copy()
     visible = np.asarray(anchor["visible"], bool).copy()

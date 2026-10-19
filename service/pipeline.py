@@ -162,6 +162,7 @@ class Analyzer:
             'region_model': kp['region_model'],
             'points': kp['points'],
             'iliac_visible': kp['iliac'],
+            'th12_coverage': kp.get('th12_coverage'),
             'axis_diagnostic': kp.get('axis_diagnostic'),
             'roi_diagnostic': kp.get('roi_diagnostic'),
             'multicrop': kp.get('multicrop'),
@@ -310,7 +311,20 @@ class Analyzer:
                 out['scoliosis'] = ''
             if scoliosis and scoliosis.get('present'):
                 out['flags'].append('scoliosis:present')
-
+            # Половина тела Th12 — из точек (контурный top_margin выключен).
+            # Hard-reject (очень малый frac при видимом bottom) OR'ится в
+            # spine_position; mid-band / bottom_missing → undetermined (review).
+            if kp and kp.get('th12_coverage') is not None:
+                from .keypoints_backend import (apply_th12_to_position,
+                                               record_th12_review)
+                pos = apply_th12_to_position(res['criteria']['position'],
+                                            kp['th12_coverage'])
+                res['criteria']['position'] = pos
+                out['details']['spine']['position'] = pos
+                for f in pos.get('flags') or []:
+                    if f not in out['flags']:
+                        out['flags'].append(f)
+                record_th12_review(out, pos)
             # Флаги оси после сколиоз-политики (suppress/review) — в общий список.
             for f in res['criteria']['axis'].get('flags', []):
                 if f not in out['flags']:
