@@ -26,6 +26,34 @@ def test_exclusion_uses_only_verified_anatomical_neighbors():
     assert len(result["clusters"]["l3_center"]) == 2
 
 
+def test_exclusion_threshold_depends_on_neighbor_pair():
+    # 10.6 мм: дальше порога L1–L2 (10.39), но ближе порога L3–L4 (11.28).
+    result = resolve_centers({"l1_center": [c(0)], "l2_center": [c(10.6), c(40)]}, 1)
+    assert len(result["clusters"]["l2_center"]) == 2
+    result = resolve_centers({"l3_center": [c(29.4), c(-10)], "l4_center": [c(40)]}, 1)
+    assert result["verified"]["l3_center"].xy[1] == -10
+    assert result["removed_near_neighbor"]["l3_center"] == 1
+
+
+def test_wrong_side_candidate_is_removed_and_verification_cascades():
+    # L2: кандидат выше L1 удаляется -> L2 верифицирован -> он отсекает
+    # кандидата L3 выше себя -> L3 верифицирован уже по новой опоре.
+    result = resolve_centers({"l1_center": [c(100)], "l2_center": [c(60), c(130)],
+                              "l3_center": [c(110), c(165)]}, 1)
+    assert result["removed_wrong_side"]["l2_center"] == 1
+    assert result["verified"]["l2_center"].xy[1] == 130
+    assert result["removed_wrong_side"]["l3_center"] == 1
+    assert result["verified"]["l3_center"].xy[1] == 165
+
+
+def test_last_candidate_on_wrong_side_is_not_verified():
+    result = resolve_centers({"l1_center": [c(0)], "l2_center": [c(-50), c(-80)],
+                              "l3_center": [c(70)]}, 1)
+    assert result["clusters"]["l2_center"] == []
+    assert "l2_center" not in result["verified"]
+    assert result["interpolated"]["l2_center"].xy[1] == 35
+
+
 def test_only_isolated_internal_gap_is_interpolated():
     result = resolve_centers({"l1_center": [c(0)], "l2_center": [],
                               "l3_center": [c(80)], "l4_center": [c(120)]}, 1)

@@ -12,6 +12,17 @@ import numpy as np
 from .multicrop import CENTERS, CropBox, load_semantic_config, map_prediction
 
 
+# Порог отсева кандидата у верифицированного соседа — треть среднего
+# расстояния между центрами этой пары во врачебной разметке
+# (data/keypoints.npz, 92 снимка позвоночника, 0.6 мм/px): L1–L2 31.18 мм,
+# L2–L3 32.46 мм, L3–L4 33.85 мм.
+NEIGHBOR_EXCLUSION_MM = {
+    ("l1_center", "l2_center"): 10.39,
+    ("l2_center", "l3_center"): 10.82,
+    ("l3_center", "l4_center"): 11.28,
+}
+
+
 @dataclass(frozen=True)
 class Candidate:
     xy: np.ndarray
@@ -86,40 +97,56 @@ def merge_close(candidates: list[Candidate], radius_px: float) -> list[Candidate
 
 
 def resolve_centers(raw: dict[str, list[Candidate]], mm_per_px: float,
-                    merge_mm: float = 10.0, exclusion_mm: float = 7.0) -> dict:
+                    merge_mm: float = 10.0,
+                    exclusion_mm: dict | None = None) -> dict:
     """Соседство задаёт анатомическая цепочка L1—L2—L3—L4.
 
-Один оставшийся пик верифицирован; несколько несовместимых пиков остаются
-неразрешёнными. Пропуск интерполируется только между двумя верифицированными
-соседями, причём интерполированная точка не создаёт каскад фиктивных точек.
+Кандидат неверифицированного позвонка удаляется, если он ближе порога пары
+к верифицированному соседу или лежит не с той стороны от него по вертикали
+(ось y направлена к ногам: верхний сосед выше, нижний — ниже). Кандидаты
+удаляются по одному; после каждого удаления позвонок с единственным
+кандидатом сразу верифицируется и становится опорой для своих соседей.
+Пропуск интерполируется только между двумя верифицированными соседями,
+причём интерполированная точка не создаёт каскад фиктивных точек.
 """
     if mm_per_px <= 0:
         raise ValueError("mm_per_px должен быть положительным")
+    limits = {**NEIGHBOR_EXCLUSION_MM, **(exclusion_mm or {})}
     clusters = {name: merge_close(raw.get(name, []), merge_mm / mm_per_px)
                 for name in CENTERS}
     verified = {name: vals[0] for name, vals in clusters.items() if len(vals) == 1}
     removed = {name: 0 for name in CENTERS}
-    while True:
-        changed = False
+    removed_side = {name: 0 for name in CENTERS}
+
+    def rejection(k: int, cand: Candidate) -> str | None:
+        for j in (k - 1, k + 1):
+            if not 0 <= j < len(CENTERS) or CENTERS[j] not in verified:
+                continue
+            other = verified[CENTERS[j]].xy
+            pair = (CENTERS[min(j, k)], CENTERS[max(j, k)])
+            if np.linalg.norm(cand.xy - other) * mm_per_px <= limits[pair]:
+                return "near"
+            if (cand.xy[1] - other[1]) * (k - j) <= 0:
+                return "side"
+        return None
+
+    def remove_one() -> bool:
         for k, name in enumerate(CENTERS):
-            if name in verified or not clusters[name]:
+            if name in verified:
                 continue
-            adjacent = [CENTERS[j] for j in (k - 1, k + 1) if 0 <= j < 4
-                        and CENTERS[j] in verified]
-            if not adjacent:
-                continue
-            kept = [c for c in clusters[name] if all(
-                np.linalg.norm(c.xy - verified[other].xy) * mm_per_px > exclusion_mm
-                for other in adjacent)]
-            if len(kept) != len(clusters[name]):
-                removed[name] += len(clusters[name]) - len(kept)
-                clusters[name] = kept
-                changed = True
-            if len(kept) == 1:
-                verified[name] = kept[0]
-                changed = True
-        if not changed:
-            break
+            for i, cand in enumerate(clusters[name]):
+                reason = rejection(k, cand)
+                if reason is None:
+                    continue
+                clusters[name] = clusters[name][:i] + clusters[name][i + 1:]
+                (removed if reason == "near" else removed_side)[name] += 1
+                if len(clusters[name]) == 1 and rejection(k, clusters[name][0]) is None:
+                    verified[name] = clusters[name][0]
+                return True
+        return False
+
+    while remove_one():
+        pass
     interpolated = {}
     for k in (1, 2):
         name = CENTERS[k]
@@ -130,7 +157,8 @@ def resolve_centers(raw: dict[str, list[Candidate]], mm_per_px: float,
                                                   verified[right].confidence),
                                            ("interpolated",))
     return {"clusters": clusters, "verified": verified,
-            "interpolated": interpolated, "removed_near_neighbor": removed}
+            "interpolated": interpolated, "removed_near_neighbor": removed,
+            "removed_wrong_side": removed_side}
 
 
 def predict_consensus(predictor, image: np.ndarray, config: dict | None = None,
@@ -208,6 +236,7 @@ def predict_consensus(predictor, image: np.ndarray, config: dict | None = None,
                            "interpolated" if name in resolved["interpolated"] else "missing"),
                 "n_merged": winner.count if winner is not None else 0,
                 "removed_near_neighbor": resolved["removed_near_neighbor"][name],
+                "removed_wrong_side": resolved["removed_wrong_side"][name],
                 "candidates_global": [{"xy": c.xy.tolist(), "sources": list(c.sources),
                                        "confidence": c.confidence} for c in vals],
                 "clusters_global": [{"xy": c.xy.tolist(), "n_merged": c.count,
