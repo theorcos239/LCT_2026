@@ -41,14 +41,26 @@ def _axis_fused(args) -> int:
     from dxa_qc.spine_shape import (curve_descriptors, fused_tilt,
                                     source_variances, tilt_sources)
     z = np.load(args.axis_oof, allow_pickle=True)
+    manifest_path = Path(args.axis_manifest) if args.axis_manifest else (
+        Path(args.axis_oof).parent / 'manifest.json')
+    manifest = (json.loads(manifest_path.read_text(encoding='utf-8'))
+                if manifest_path.exists() else {})
+    provenance_verified = bool(
+        manifest.get('schema_version') == 1
+        and manifest.get('threshold_protocol') == 'crossfit'
+        and manifest.get('checkpoint_sha256')
+        and 'folds' in z.files
+        and sorted(set(map(int, z['folds']))) == manifest.get('folds'))
     names = list(z['names'])
     thresholds = np.asarray(z['thresholds'])
     m = pd.read_csv(HERE / 'measurements.csv').set_index('study')
     rows = []
+    matched_spine = 0
     for i, region in enumerate(z['regions']):
         study = str(z['studies'][i])
         if str(region) != 'spine' or study not in m.index:
             continue
+        matched_spine += 1
         th = thresholds[i] if thresholds.ndim == 2 else thresholds
         visible = np.asarray(z['conf'][i]) >= th
         contour = m.loc[study]
@@ -57,15 +69,50 @@ def _axis_fused(args) -> int:
         src = tilt_sources(z['pred'][i], visible, names, .6, contour_dict,
                            z['conf'][i])
         curve = curve_descriptors(z['pred'][i], visible, names, .6)
-        if not curve.get('available'):
-            continue
+        true_visible = np.asarray(z['visible'][i], bool)
+        gt_src = tilt_sources(z['true'][i], true_visible, names, .6)
+        gt_src['theta_contour_deg'] = src['theta_contour_deg']
+        gt_curve = curve_descriptors(z['true'][i], true_visible, names, .6)
+        point_mask = true_visible & visible
+        point_error = np.linalg.norm(z['pred'][i][point_mask]
+                                     - z['true'][i][point_mask], axis=1)
         rows.append({'study': study, 'fold': int(contour.fold),
                      'y': int(contour.y_axis),
                      'scoliosis': 'колиоз' in str(contour.comment).lower(),
                      'src': src, 'curve': curve,
+                     'gt_src': gt_src, 'gt_curve': gt_curve,
+                     'point_error_px': point_error,
                      'contour_curvature_mm': float(contour.curvature_mm)})
     if not rows:
         raise ValueError(f'{args.axis_oof}: нет сопоставимых spine-строк')
+
+    def fit_noise(indices):
+        """Погрешности источников: только обучающие исследования данного фолда."""
+        straight = [rows[i] for i in indices if not rows[i]['scoliosis']
+                    and rows[i]['contour_curvature_mm'] < 6.0]
+        if len(straight) < 5:
+            straight = [rows[i] for i in indices if not rows[i]['scoliosis']]
+        def residual(key, floor, edge_scale=False):
+            values = []
+            for row in straight:
+                expected = row['gt_src'].get(key)
+                measured = row['src'].get(key)
+                if expected is not None and measured is not None:
+                    scale = np.sqrt(max(row['src']['n_endplates'], 1)) if edge_scale else 1.0
+                    values.append((measured - expected) * scale)
+            return max(float(np.std(values, ddof=1)), floor) if len(values) >= 5 else floor
+        errors = np.concatenate([r['point_error_px'] for r in straight
+                                 if len(r['point_error_px'])]) if straight else np.array([])
+        return {
+            'sigma_c0': residual('theta_centers_deg', 1.25),
+            'sigma_e0': residual('theta_endplates_deg', 2.0, True),
+            'sigma_k0': max(float(np.std([
+                r['src']['theta_contour_deg'] - r['gt_src']['theta_centers_deg']
+                for r in straight if r['gt_src']['theta_centers_deg'] is not None], ddof=1)),
+                1.5) if len(straight) >= 5 else 1.5,
+            'point_sigma_px': max(float(np.median(errors) / np.sqrt(2)), .5)
+                              if len(errors) else 1.5,
+        }
 
     grid = []
     for bc in (.5, 1., 2.):
@@ -81,11 +128,14 @@ def _axis_fused(args) -> int:
             row = rows[i]
             variance = source_variances(
                 row['src'], row['curve'],
-                {**params, 'contour_curvature_mm': row['contour_curvature_mm']})
+                {**params, 'contour_curvature_mm': row['contour_curvature_mm']},
+                point_sigma_px=params['point_sigma_px'])
             fused = fused_tilt(row['src'], variance)
             dec = axis_decision(fused['theta_fused_deg'], fused['sigma_deg'],
                                 fused['Q'], fused['n_sources'],
                                 {'uncertainty_k': params['uncertainty_k']})
+            if not row['curve'].get('available'):
+                dec['state'] = 'undetermined'
             pred.append(dec['state'] == 'unsuitable')
             state.append(dec['state'])
             angle.append(fused['theta_fused_deg'])
@@ -98,18 +148,20 @@ def _axis_fused(args) -> int:
     for fold in folds:
         train = np.array([i for i, r in enumerate(rows) if r['fold'] != fold])
         test = np.array([i for i, r in enumerate(rows) if r['fold'] == fold])
+        noise = fit_noise(train)
         best = None
         ytr = np.asarray([rows[i]['y'] for i in train])
         for params in grid:
-            pred, state, _ = predict(train, params)
+            candidate = {**params, **noise}
+            pred, state, _ = predict(train, candidate)
             c = stats.confusion(ytr, pred)
             und = float(np.mean(state == 'undetermined'))
             score = (c['f1'], -c['fn'], -und)
             if und <= .15 and (best is None or score > best[0]):
-                best = (score, params)
+                best = (score, candidate)
         if best is None:
             best = ((-1, 0, 0), {'b_c': 1., 'b_e': 1., 'b_k': 1.,
-                                  'b_r': 1., 'tau': 1.5, 'uncertainty_k': 0.})
+                                  'b_r': 1., 'tau': 1.5, 'uncertainty_k': 0., **noise})
         chosen.append(best[1])
         oof_pred[test], oof_state[test], _ = predict(test, best[1])
 
@@ -121,31 +173,86 @@ def _axis_fused(args) -> int:
         if r['src']['theta_centers_deg'] is not None else False for r in rows
     ])
     full_idx = np.arange(len(rows))
+    runtime_noise = fit_noise(full_idx)
     runtime_best = None
     for params in grid:
-        pred, state, _ = predict(full_idx, params)
+        candidate = {**params, **runtime_noise}
+        pred, state, _ = predict(full_idx, candidate)
         cm = stats.confusion(y, pred)
         und = float(np.mean(state == 'undetermined'))
         score = (cm['f1'], -cm['fn'], -und)
         if und <= .15 and (runtime_best is None or score > runtime_best[0]):
-            runtime_best = (score, params)
+            runtime_best = (score, candidate)
     runtime_params = (runtime_best[1] if runtime_best else
                       {'b_c': 1., 'b_e': 1., 'b_k': 1., 'b_r': 1.,
-                       'tau': 1.5, 'uncertainty_k': 0.})
+                       'tau': 1.5, 'uncertainty_k': 0., **runtime_noise})
+    gt_pred = []
+    for row in rows:
+        gt_sigmas = source_variances(
+            row['gt_src'], row['gt_curve'],
+            {**runtime_params, 'contour_curvature_mm': row['contour_curvature_mm']},
+            point_sigma_px=0.0)
+        gt_fused = fused_tilt(row['gt_src'], gt_sigmas)
+        gt_decision = axis_decision(
+            gt_fused['theta_fused_deg'], gt_fused['sigma_deg'],
+            gt_fused['Q'], gt_fused['n_sources'],
+            {'uncertainty_k': runtime_params['uncertainty_k']})
+        if not row['gt_curve'].get('available'):
+            gt_decision['state'] = 'undetermined'
+        gt_pred.append(gt_decision['state'] == 'unsuitable')
+    gt_confusion = stats.confusion(y, np.asarray(gt_pred, int))
+    groups = {study: [i for i, r in enumerate(rows) if r['study'] == study]
+              for study in sorted({r['study'] for r in rows})}
+    rng = np.random.default_rng(2026)
+    boot = []
+    study_ids = list(groups)
+    for _ in range(1000):
+        sample = rng.choice(study_ids, size=len(study_ids), replace=True)
+        take = [i for study in sample for i in groups[study]]
+        boot.append(stats.confusion(y[take], oof_pred[take])['f1'])
     result = {
         **{key: c[key] for key in ('tp', 'fp', 'fn', 'sensitivity', 'specificity', 'f1')},
         'n': len(rows), 'undetermined_fraction': float(np.mean(oof_state == 'undetermined')),
+        'provenance_verified': provenance_verified,
+        'checkpoint_sha256': (manifest['checkpoint_sha256']
+                              if provenance_verified else {}),
+        'matched_spine_frames': matched_spine,
+        'missing_predicted_center_chains': sum(
+            not row['curve'].get('available') for row in rows),
+        'f1_bootstrap_95': [float(x) for x in np.percentile(boot, [2.5, 97.5])],
         'scoliosis_fp_centers': int(np.sum(center_bad & scoliosis & (y == 0))),
         'scoliosis_fp_fused': int(np.sum((oof_pred == 1) & scoliosis & (y == 0))),
+        'centers_f1_same_frames': float(stats.confusion(y, center_bad.astype(int))['f1']),
+        'gt_points_upper_bound_same_frames': {
+            key: gt_confusion[key] for key in ('tp', 'fp', 'fn', 'f1')},
         'fold_params': chosen,
         'runtime_params': runtime_params,
     }
-    print('OOF исправленного угла:', json.dumps(result, ensure_ascii=False, indent=2))
-    passed = (result['f1'] > .33 and result['undetermined_fraction'] <= .15
+    synthetic_path = Path(args.axis_synthetic)
+    synthetic = (json.loads(synthetic_path.read_text(encoding='utf-8'))
+                 if synthetic_path.exists() else {})
+    result['synthetic_max_excess_deg'] = synthetic.get('fused_max_excess_deg')
+    result['synthetic_verified'] = bool(synthetic.get('fused_gate_passed'))
+    service_path = Path(args.axis_service_metrics)
+    service = (json.loads(service_path.read_text(encoding='utf-8'))
+               if service_path.exists() else {})
+    result['service_spine_f1'] = service.get('spine_f1')
+    result['service_verified'] = bool(service.get('same_fold_provenance_verified'))
+    # Включение требует одновременно доказанной сервисной метрики и
+    # синтетики. Историческая сводка без исходных OOF не открывает гейт.
+    passed = (result['f1'] > .33
+              and result['f1'] > result['centers_f1_same_frames']
+              and result['undetermined_fraction'] <= .15
               and result['fn'] <= 1
               and result['scoliosis_fp_fused']
-              <= .5 * max(result['scoliosis_fp_centers'], 1))
+              <= .5 * max(result['scoliosis_fp_centers'], 1)
+              and result['synthetic_verified']
+              and result['service_verified']
+              and result['service_spine_f1'] is not None
+              and result['service_spine_f1'] >= .57
+              and result['provenance_verified'])
     result['gate_passed'] = bool(passed)
+    print('OOF исправленного угла:', json.dumps(result, ensure_ascii=False, indent=2))
     out = Path(args.axis_out)
     out.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
     print(f'G2: {"ПРОЙДЕН" if passed else "НЕ ПРОЙДЕН"}; {out}')
@@ -419,7 +526,13 @@ def main() -> int:
     ap.add_argument('--axis-fused', action='store_true',
                     help='оценить исправленный угол по OOF модели точек')
     ap.add_argument('--axis-oof', default='runs/keypoints_crops/oof.npz')
+    ap.add_argument('--axis-manifest', default=None,
+                    help='manifest baseline OOF; по умолчанию рядом с --axis-oof')
     ap.add_argument('--axis-out', default='runs/keypoints_crops/metrics_axis_fused.json')
+    ap.add_argument('--axis-synthetic',
+                    default='runs/keypoints_crops/metrics_axis_synthetic.json')
+    ap.add_argument('--axis-service-metrics',
+                    default='runs/keypoints_crops/metrics_axis_service_oof.json')
     args = ap.parse_args()
     if args.axis_fused:
         return _axis_fused(args)

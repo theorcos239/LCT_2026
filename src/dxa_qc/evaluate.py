@@ -26,6 +26,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 
@@ -74,6 +75,10 @@ def predict_frames(predictor: Predictor, frames: list, chain: bool = True,
             r = predictor.predict_multicrop(image_u8, {"mode": "v1"})
         elif region == "spine" and multicrop == "auto":
             r = predictor.predict_semantic(image_u8)
+        elif region == "spine" and multicrop == "consensus":
+            r = predictor.predict_consensus(image_u8)
+        elif region == "spine" and multicrop == "consensus_adaptive":
+            r = predictor.predict_consensus(image_u8, box_mode="adaptive")
         elif region == "spine" and multicrop == "oracle":
             from .multicrop import predict_oracle_semantic
             uid = str(image_ids[j]) if image_ids is not None else ""
@@ -92,7 +97,7 @@ def fold_oof(run_dir: str | Path, data: dict, device: torch.device | str,
              crops: int = 6, folds: list[int] | None = None,
              thresholds: np.ndarray | dict[int, np.ndarray] | None = None,
              multicrop: str = "off",
-             crop_annotations: str | Path = "Разметка.json") -> list[dict]:
+             crop_annotations: str | Path = "Processing/dxa-crops.json") -> list[dict]:
     """По каждому фолду — предсказания рабочего инференса на его отложенных кадрах.
 
     orig — исходные кадры, orig_indep — они же без цепочки позвоночника,
@@ -121,6 +126,7 @@ def fold_oof(run_dir: str | Path, data: dict, device: torch.device | str,
         fold_of = dict(zip(split.study, split.fold))
         val_idx = np.flatnonzero([fold_of.get(s, -1) == fold for s in studies])
         orig, trunc = fold_frames(data, val_idx, crops)
+        print(f"fold {fold}: {len(orig)} исходных кадров, режим {multicrop}", flush=True)
         result.append({"fold": fold, "config": cfg,
                        "thresholds": predictor.thresholds.copy(),
                        "orig": predict_frames(predictor, orig, multicrop=multicrop,
@@ -128,6 +134,7 @@ def fold_oof(run_dir: str | Path, data: dict, device: torch.device | str,
                                               image_ids=np.asarray(data["ids"])),
                        "orig_indep": predict_frames(predictor, orig, chain=False),
                        "trunc": predict_frames(predictor, trunc, chain=False)})
+        print(f"fold {fold}: готово", flush=True)
     if not result:
         raise FileNotFoundError(f"{run_dir}: нет весов foldN.pt для выбранных фолдов")
     return result
@@ -281,12 +288,19 @@ def main() -> None:
                    help="только эти фолды — для сравнения с недообученным прогоном")
     p.add_argument("--calibrate", action="store_true",
                    help="пересчитать thresholds.csv прогона по рабочему инференсу")
-    p.add_argument("--multicrop", choices=("off", "v1", "oracle", "auto"), default="off",
+    p.add_argument("--multicrop", choices=("off", "v1", "oracle", "auto", "consensus",
+                                           "consensus_adaptive"), default="off",
                    help="режим multi-crop на исходных spine-кадрах")
+    p.add_argument("--crop-annotations", default="Processing/dxa-crops.json",
+                   help="подтверждённые рамки для диагностического режима oracle")
+    p.add_argument("--thresholds-from", default=None,
+                   help="каталог baseline OOF: использовать в точности его пороги по фолдам")
     p.add_argument("--out", default=None, help="куда сохранить сводку и таблицы (csv)")
     a = p.parse_args()
     if a.crops < 1:
         p.error("--crops должен быть не меньше 1 для калибровки видимости")
+    if a.calibrate and a.thresholds_from:
+        p.error("--calibrate нельзя совмещать с --thresholds-from")
 
     device = select_device(a.device)
     print(f"Устройство PyTorch: {device}")
@@ -297,13 +311,35 @@ def main() -> None:
     if report_dir:
         report_dir.mkdir(parents=True, exist_ok=True)
     for run in a.run:
-        folds = fold_oof(run, data, device, a.crops, folds=a.folds,
-                         multicrop=a.multicrop)
+        if a.thresholds_from:
+            baseline_dir = Path(a.thresholds_from)
+            baseline_manifest = json.loads(
+                (baseline_dir / "manifest.json").read_text(encoding="utf-8"))
+            if baseline_manifest["crops_per_image"] != a.crops:
+                raise ValueError("baseline имеет другое число детерминированных обрезов")
+            with np.load(baseline_dir / "oof_evaluated.npz", allow_pickle=False) as z:
+                if not np.array_equal(z["names"], np.asarray(names)):
+                    raise ValueError("baseline имеет другой набор каналов")
+                by_fold = {}
+                for fold in np.unique(z["folds"]):
+                    values = z["thresholds"][z["folds"] == fold]
+                    if not np.allclose(values, values[0]):
+                        raise ValueError(f"baseline: разные пороги внутри fold {fold}")
+                    by_fold[int(fold)] = values[0]
+            folds = fold_oof(run, data, device, a.crops, folds=a.folds,
+                             thresholds=by_fold, multicrop=a.multicrop,
+                             crop_annotations=a.crop_annotations)
+            protocol = baseline_manifest["threshold_protocol"]
+        else:
+            folds = fold_oof(run, data, device, a.crops, folds=a.folds,
+                             multicrop=a.multicrop, crop_annotations=a.crop_annotations)
         if a.calibrate:
             th = calibrate(names, folds)
             th.to_csv(Path(run) / "thresholds.csv")
             print(f"{run}: пороги видимости пересчитаны по рабочему инференсу")
-        if len(folds) > 1:
+        if a.thresholds_from:
+            pass  # пороги и протокол уже скопированы из baseline
+        elif len(folds) > 1:
             # Отложенный фолд не участвует даже в выборе порога, от которого
             # зависит декодирование уровня позвонка.
             own_cfg = folds[0].get("config", {})
@@ -312,11 +348,13 @@ def main() -> None:
             leave_one_out = crossfit_thresholds(names, folds, objective, default)
             by_fold = {f["fold"]: t for f, t in zip(folds, leave_one_out)}
             folds = fold_oof(run, data, device, a.crops, folds=a.folds,
-                             thresholds=by_fold, multicrop=a.multicrop)
+                             thresholds=by_fold, multicrop=a.multicrop,
+                             crop_annotations=a.crop_annotations)
             protocol = "crossfit"
         elif a.calibrate:
             folds = fold_oof(run, data, device, a.crops, folds=a.folds,
-                             thresholds=th.to_numpy(), multicrop=a.multicrop)
+                             thresholds=th.to_numpy(), multicrop=a.multicrop,
+                             crop_annotations=a.crop_annotations)
             protocol = "same_fold_calibrated"
         else:
             protocol = "saved"
@@ -325,6 +363,37 @@ def main() -> None:
         key = "crossfit" if "crossfit" in res["tables"] else "own"
         per_point.append(res["tables"][key].assign(run=run))
         if report_dir:
+            def sha256(path: Path) -> str:
+                digest = hashlib.sha256()
+                with path.open("rb") as stream:
+                    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                        digest.update(chunk)
+                return digest.hexdigest()
+
+            weight_hashes = {
+                str(f["fold"]): sha256(Path(run) / f'fold{f["fold"]}.pt')
+                for f in folds
+            }
+            manifest = {
+                "schema_version": 1,
+                "run": str(Path(run)),
+                "multicrop": a.multicrop,
+                "folds": sorted(int(f["fold"]) for f in folds),
+                "pack_sha256": sha256(Path(a.pack)),
+                "checkpoint_sha256": weight_hashes,
+                "threshold_protocol": protocol,
+                "crops_per_image": int(a.crops),
+            }
+            if a.multicrop == "oracle":
+                manifest["annotation_sha256"] = sha256(Path(a.crop_annotations))
+            if a.multicrop in ("auto", "consensus", "consensus_adaptive"):
+                from .multicrop import DEFAULT_SEMANTIC_CONFIG
+                manifest["semantic_config_sha256"] = sha256(DEFAULT_SEMANTIC_CONFIG)
+                anchor_path = Path(run) / "thresholds_anchor.csv"
+                if not anchor_path.exists():
+                    raise FileNotFoundError(
+                        f"{anchor_path}: для OOF semantic нужен crossfit порог якоря")
+                manifest["anchor_thresholds_sha256"] = sha256(anchor_path)
             merged = concat([f["orig"] for f in folds])
             idx = merged["index"]
             ident = {k: np.asarray(data[k])[idx]
@@ -337,9 +406,15 @@ def main() -> None:
                 row_thresholds = np.repeat(
                     run_thresholds(run, names)[None], len(idx), axis=0)
             prefix = f"{Path(run).name}_" if len(a.run) > 1 else ""
+            (report_dir / f"{prefix}manifest.json").write_text(
+                json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+            frame_folds = np.concatenate([
+                np.full(len(f["orig"]["index"]), f["fold"], dtype=int) for f in folds
+            ])
             np.savez_compressed(report_dir / f"{prefix}oof_evaluated.npz",
                                 names=np.asarray(names), thresholds=row_thresholds,
-                                protocol=np.asarray(protocol), **ident, **merged)
+                                protocol=np.asarray(protocol), folds=frame_folds,
+                                **ident, **merged)
             if a.crops > 0:
                 clipped = concat([f["trunc"] for f in folds])
                 crop_idx = clipped["index"]

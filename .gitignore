@@ -22,6 +22,7 @@ runs/**
 !runs/keypoints_crops/
 !runs/keypoints_crops/config.yaml
 !runs/keypoints_crops/thresholds.csv
+!runs/keypoints_crops/thresholds_anchor.csv
 !runs/keypoints_crops/thresholds_crop.csv
 !runs/keypoints_crops/metrics_*.csv
 !runs/keypoints_crops/metrics_*.json

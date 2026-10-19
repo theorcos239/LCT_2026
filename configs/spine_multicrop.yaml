@@ -6,6 +6,187 @@ specs:
   t12_l1:
     rank: 0
     n_crops: 89
+    fixed_band:
+    - 0.0
+    - 0.44
+    expected_centers:
+    - l1_center
+    guaranteed_points:
+    - th12_bottom
+    - l1_center
+    - disc_th12_l1
+    - l1_edge_right
+    - l1_edge_left
+    fixed_coverage:
+      th12_top:
+        inside: 29
+        labeled: 29
+      th12_bottom:
+        inside: 86
+        labeled: 86
+      l1_center:
+        inside: 92
+        labeled: 92
+      l2_center:
+        inside: 60
+        labeled: 92
+      l3_center:
+        inside: 1
+        labeled: 92
+      l4_center:
+        inside: 0
+        labeled: 91
+      iliac_right:
+        inside: 0
+        labeled: 86
+      iliac_left:
+        inside: 0
+        labeled: 87
+      disc_th12_l1:
+        inside: 90
+        labeled: 90
+      disc_l1_l2:
+        inside: 85
+        labeled: 90
+      disc_l2_l3:
+        inside: 15
+        labeled: 91
+      disc_l3_l4:
+        inside: 0
+        labeled: 91
+      disc_l4_l5:
+        inside: 0
+        labeled: 88
+      l1_edge_right:
+        inside: 92
+        labeled: 92
+      l1_edge_left:
+        inside: 92
+        labeled: 92
+      l2_edge_right:
+        inside: 59
+        labeled: 92
+      l2_edge_left:
+        inside: 59
+        labeled: 92
+      l3_edge_right:
+        inside: 0
+        labeled: 92
+      l3_edge_left:
+        inside: 0
+        labeled: 92
+      l4_edge_right:
+        inside: 0
+        labeled: 91
+      l4_edge_left:
+        inside: 0
+        labeled: 91
+    point_presence:
+      th12_top:
+        selected: 29
+        inside_unselected: 0
+        outside: 0
+        unknown: 60
+      th12_bottom:
+        selected: 84
+        inside_unselected: 0
+        outside: 0
+        unknown: 5
+      l1_center:
+        selected: 89
+        inside_unselected: 0
+        outside: 0
+        unknown: 0
+      l2_center:
+        selected: 49
+        inside_unselected: 1
+        outside: 39
+        unknown: 0
+      l3_center:
+        selected: 0
+        inside_unselected: 0
+        outside: 89
+        unknown: 0
+      l4_center:
+        selected: 0
+        inside_unselected: 0
+        outside: 89
+        unknown: 0
+      iliac_right:
+        selected: 0
+        inside_unselected: 0
+        outside: 83
+        unknown: 6
+      iliac_left:
+        selected: 0
+        inside_unselected: 0
+        outside: 84
+        unknown: 5
+      disc_th12_l1:
+        selected: 87
+        inside_unselected: 0
+        outside: 0
+        unknown: 2
+      disc_l1_l2:
+        selected: 88
+        inside_unselected: 0
+        outside: 0
+        unknown: 1
+      disc_l2_l3:
+        selected: 9
+        inside_unselected: 0
+        outside: 80
+        unknown: 0
+      disc_l3_l4:
+        selected: 0
+        inside_unselected: 0
+        outside: 89
+        unknown: 0
+      disc_l4_l5:
+        selected: 0
+        inside_unselected: 0
+        outside: 86
+        unknown: 3
+      l1_edge_right:
+        selected: 89
+        inside_unselected: 0
+        outside: 0
+        unknown: 0
+      l1_edge_left:
+        selected: 89
+        inside_unselected: 0
+        outside: 0
+        unknown: 0
+      l2_edge_right:
+        selected: 50
+        inside_unselected: 0
+        outside: 39
+        unknown: 0
+      l2_edge_left:
+        selected: 50
+        inside_unselected: 0
+        outside: 39
+        unknown: 0
+      l3_edge_right:
+        selected: 0
+        inside_unselected: 0
+        outside: 89
+        unknown: 0
+      l3_edge_left:
+        selected: 0
+        inside_unselected: 0
+        outside: 89
+        unknown: 0
+      l4_edge_right:
+        selected: 0
+        inside_unselected: 0
+        outside: 89
+        unknown: 0
+      l4_edge_left:
+        selected: 0
+        inside_unselected: 0
+        outside: 89
+        unknown: 0
     output:
     - th12_bottom
     - l1_center
@@ -65,6 +246,191 @@ specs:
   l1_l2:
     rank: 1
     n_crops: 89
+    fixed_band:
+    - 0.0
+    - 0.59
+    expected_centers:
+    - l1_center
+    - l2_center
+    guaranteed_points:
+    - l1_center
+    - l2_center
+    - disc_th12_l1
+    - disc_l1_l2
+    - l1_edge_right
+    - l1_edge_left
+    - l2_edge_right
+    - l2_edge_left
+    fixed_coverage:
+      th12_top:
+        inside: 29
+        labeled: 29
+      th12_bottom:
+        inside: 86
+        labeled: 86
+      l1_center:
+        inside: 92
+        labeled: 92
+      l2_center:
+        inside: 92
+        labeled: 92
+      l3_center:
+        inside: 44
+        labeled: 92
+      l4_center:
+        inside: 0
+        labeled: 91
+      iliac_right:
+        inside: 0
+        labeled: 86
+      iliac_left:
+        inside: 0
+        labeled: 87
+      disc_th12_l1:
+        inside: 90
+        labeled: 90
+      disc_l1_l2:
+        inside: 90
+        labeled: 90
+      disc_l2_l3:
+        inside: 85
+        labeled: 91
+      disc_l3_l4:
+        inside: 8
+        labeled: 91
+      disc_l4_l5:
+        inside: 0
+        labeled: 88
+      l1_edge_right:
+        inside: 92
+        labeled: 92
+      l1_edge_left:
+        inside: 92
+        labeled: 92
+      l2_edge_right:
+        inside: 92
+        labeled: 92
+      l2_edge_left:
+        inside: 92
+        labeled: 92
+      l3_edge_right:
+        inside: 41
+        labeled: 92
+      l3_edge_left:
+        inside: 46
+        labeled: 92
+      l4_edge_right:
+        inside: 0
+        labeled: 91
+      l4_edge_left:
+        inside: 0
+        labeled: 91
+    point_presence:
+      th12_top:
+        selected: 0
+        inside_unselected: 0
+        outside: 29
+        unknown: 60
+      th12_bottom:
+        selected: 1
+        inside_unselected: 0
+        outside: 83
+        unknown: 5
+      l1_center:
+        selected: 86
+        inside_unselected: 0
+        outside: 3
+        unknown: 0
+      l2_center:
+        selected: 89
+        inside_unselected: 0
+        outside: 0
+        unknown: 0
+      l3_center:
+        selected: 4
+        inside_unselected: 0
+        outside: 85
+        unknown: 0
+      l4_center:
+        selected: 0
+        inside_unselected: 0
+        outside: 89
+        unknown: 0
+      iliac_right:
+        selected: 0
+        inside_unselected: 0
+        outside: 83
+        unknown: 6
+      iliac_left:
+        selected: 0
+        inside_unselected: 0
+        outside: 84
+        unknown: 5
+      disc_th12_l1:
+        selected: 85
+        inside_unselected: 0
+        outside: 2
+        unknown: 2
+      disc_l1_l2:
+        selected: 87
+        inside_unselected: 0
+        outside: 1
+        unknown: 1
+      disc_l2_l3:
+        selected: 89
+        inside_unselected: 0
+        outside: 0
+        unknown: 0
+      disc_l3_l4:
+        selected: 3
+        inside_unselected: 0
+        outside: 86
+        unknown: 0
+      disc_l4_l5:
+        selected: 0
+        inside_unselected: 0
+        outside: 86
+        unknown: 3
+      l1_edge_right:
+        selected: 86
+        inside_unselected: 0
+        outside: 3
+        unknown: 0
+      l1_edge_left:
+        selected: 86
+        inside_unselected: 0
+        outside: 3
+        unknown: 0
+      l2_edge_right:
+        selected: 89
+        inside_unselected: 0
+        outside: 0
+        unknown: 0
+      l2_edge_left:
+        selected: 89
+        inside_unselected: 0
+        outside: 0
+        unknown: 0
+      l3_edge_right:
+        selected: 4
+        inside_unselected: 0
+        outside: 85
+        unknown: 0
+      l3_edge_left:
+        selected: 4
+        inside_unselected: 0
+        outside: 85
+        unknown: 0
+      l4_edge_right:
+        selected: 0
+        inside_unselected: 0
+        outside: 89
+        unknown: 0
+      l4_edge_left:
+        selected: 0
+        inside_unselected: 0
+        outside: 89
+        unknown: 0
     output:
     - l1_center
     - l2_center
@@ -124,6 +490,190 @@ specs:
   l2_l3:
     rank: 2
     n_crops: 89
+    fixed_band:
+    - 0.19
+    - 0.79
+    expected_centers:
+    - l2_center
+    - l3_center
+    guaranteed_points:
+    - l2_center
+    - l3_center
+    - disc_l2_l3
+    - l2_edge_right
+    - l2_edge_left
+    - l3_edge_right
+    - l3_edge_left
+    fixed_coverage:
+      th12_top:
+        inside: 0
+        labeled: 29
+      th12_bottom:
+        inside: 6
+        labeled: 86
+      l1_center:
+        inside: 42
+        labeled: 92
+      l2_center:
+        inside: 92
+        labeled: 92
+      l3_center:
+        inside: 92
+        labeled: 92
+      l4_center:
+        inside: 52
+        labeled: 91
+      iliac_right:
+        inside: 11
+        labeled: 86
+      iliac_left:
+        inside: 16
+        labeled: 87
+      disc_th12_l1:
+        inside: 9
+        labeled: 90
+      disc_l1_l2:
+        inside: 81
+        labeled: 90
+      disc_l2_l3:
+        inside: 91
+        labeled: 91
+      disc_l3_l4:
+        inside: 88
+        labeled: 91
+      disc_l4_l5:
+        inside: 11
+        labeled: 88
+      l1_edge_right:
+        inside: 41
+        labeled: 92
+      l1_edge_left:
+        inside: 38
+        labeled: 92
+      l2_edge_right:
+        inside: 92
+        labeled: 92
+      l2_edge_left:
+        inside: 92
+        labeled: 92
+      l3_edge_right:
+        inside: 92
+        labeled: 92
+      l3_edge_left:
+        inside: 92
+        labeled: 92
+      l4_edge_right:
+        inside: 50
+        labeled: 91
+      l4_edge_left:
+        inside: 52
+        labeled: 91
+    point_presence:
+      th12_top:
+        selected: 0
+        inside_unselected: 0
+        outside: 29
+        unknown: 60
+      th12_bottom:
+        selected: 0
+        inside_unselected: 0
+        outside: 84
+        unknown: 5
+      l1_center:
+        selected: 0
+        inside_unselected: 0
+        outside: 89
+        unknown: 0
+      l2_center:
+        selected: 87
+        inside_unselected: 0
+        outside: 2
+        unknown: 0
+      l3_center:
+        selected: 89
+        inside_unselected: 0
+        outside: 0
+        unknown: 0
+      l4_center:
+        selected: 2
+        inside_unselected: 0
+        outside: 86
+        unknown: 1
+      iliac_right:
+        selected: 1
+        inside_unselected: 0
+        outside: 82
+        unknown: 6
+      iliac_left:
+        selected: 2
+        inside_unselected: 0
+        outside: 82
+        unknown: 5
+      disc_th12_l1:
+        selected: 0
+        inside_unselected: 0
+        outside: 87
+        unknown: 2
+      disc_l1_l2:
+        selected: 83
+        inside_unselected: 1
+        outside: 3
+        unknown: 2
+      disc_l2_l3:
+        selected: 88
+        inside_unselected: 0
+        outside: 0
+        unknown: 1
+      disc_l3_l4:
+        selected: 88
+        inside_unselected: 0
+        outside: 0
+        unknown: 1
+      disc_l4_l5:
+        selected: 2
+        inside_unselected: 0
+        outside: 83
+        unknown: 4
+      l1_edge_right:
+        selected: 0
+        inside_unselected: 0
+        outside: 89
+        unknown: 0
+      l1_edge_left:
+        selected: 0
+        inside_unselected: 0
+        outside: 89
+        unknown: 0
+      l2_edge_right:
+        selected: 87
+        inside_unselected: 0
+        outside: 2
+        unknown: 0
+      l2_edge_left:
+        selected: 87
+        inside_unselected: 0
+        outside: 2
+        unknown: 0
+      l3_edge_right:
+        selected: 89
+        inside_unselected: 0
+        outside: 0
+        unknown: 0
+      l3_edge_left:
+        selected: 89
+        inside_unselected: 0
+        outside: 0
+        unknown: 0
+      l4_edge_right:
+        selected: 2
+        inside_unselected: 0
+        outside: 86
+        unknown: 1
+      l4_edge_left:
+        selected: 2
+        inside_unselected: 0
+        outside: 86
+        unknown: 1
     output:
     - l2_center
     - l3_center
@@ -183,6 +733,193 @@ specs:
   l3_l4:
     rank: 3
     n_crops: 92
+    fixed_band:
+    - 0.37
+    - 1.0
+    expected_centers:
+    - l3_center
+    - l4_center
+    guaranteed_points:
+    - l3_center
+    - l4_center
+    - iliac_right
+    - iliac_left
+    - disc_l3_l4
+    - disc_l4_l5
+    - l3_edge_right
+    - l3_edge_left
+    - l4_edge_right
+    - l4_edge_left
+    fixed_coverage:
+      th12_top:
+        inside: 0
+        labeled: 29
+      th12_bottom:
+        inside: 0
+        labeled: 86
+      l1_center:
+        inside: 0
+        labeled: 92
+      l2_center:
+        inside: 32
+        labeled: 92
+      l3_center:
+        inside: 92
+        labeled: 92
+      l4_center:
+        inside: 91
+        labeled: 91
+      iliac_right:
+        inside: 86
+        labeled: 86
+      iliac_left:
+        inside: 87
+        labeled: 87
+      disc_th12_l1:
+        inside: 0
+        labeled: 90
+      disc_l1_l2:
+        inside: 5
+        labeled: 90
+      disc_l2_l3:
+        inside: 79
+        labeled: 91
+      disc_l3_l4:
+        inside: 91
+        labeled: 91
+      disc_l4_l5:
+        inside: 88
+        labeled: 88
+      l1_edge_right:
+        inside: 0
+        labeled: 92
+      l1_edge_left:
+        inside: 0
+        labeled: 92
+      l2_edge_right:
+        inside: 34
+        labeled: 92
+      l2_edge_left:
+        inside: 33
+        labeled: 92
+      l3_edge_right:
+        inside: 92
+        labeled: 92
+      l3_edge_left:
+        inside: 92
+        labeled: 92
+      l4_edge_right:
+        inside: 91
+        labeled: 91
+      l4_edge_left:
+        inside: 91
+        labeled: 91
+    point_presence:
+      th12_top:
+        selected: 0
+        inside_unselected: 0
+        outside: 29
+        unknown: 63
+      th12_bottom:
+        selected: 0
+        inside_unselected: 0
+        outside: 86
+        unknown: 6
+      l1_center:
+        selected: 0
+        inside_unselected: 0
+        outside: 92
+        unknown: 0
+      l2_center:
+        selected: 1
+        inside_unselected: 0
+        outside: 91
+        unknown: 0
+      l3_center:
+        selected: 92
+        inside_unselected: 0
+        outside: 0
+        unknown: 0
+      l4_center:
+        selected: 90
+        inside_unselected: 1
+        outside: 0
+        unknown: 1
+      iliac_right:
+        selected: 83
+        inside_unselected: 0
+        outside: 3
+        unknown: 6
+      iliac_left:
+        selected: 87
+        inside_unselected: 0
+        outside: 0
+        unknown: 5
+      disc_th12_l1:
+        selected: 0
+        inside_unselected: 0
+        outside: 90
+        unknown: 2
+      disc_l1_l2:
+        selected: 0
+        inside_unselected: 0
+        outside: 90
+        unknown: 2
+      disc_l2_l3:
+        selected: 91
+        inside_unselected: 0
+        outside: 0
+        unknown: 1
+      disc_l3_l4:
+        selected: 91
+        inside_unselected: 0
+        outside: 0
+        unknown: 1
+      disc_l4_l5:
+        selected: 88
+        inside_unselected: 0
+        outside: 0
+        unknown: 4
+      l1_edge_right:
+        selected: 0
+        inside_unselected: 0
+        outside: 92
+        unknown: 0
+      l1_edge_left:
+        selected: 0
+        inside_unselected: 0
+        outside: 92
+        unknown: 0
+      l2_edge_right:
+        selected: 1
+        inside_unselected: 0
+        outside: 91
+        unknown: 0
+      l2_edge_left:
+        selected: 1
+        inside_unselected: 0
+        outside: 91
+        unknown: 0
+      l3_edge_right:
+        selected: 92
+        inside_unselected: 0
+        outside: 0
+        unknown: 0
+      l3_edge_left:
+        selected: 92
+        inside_unselected: 0
+        outside: 0
+        unknown: 0
+      l4_edge_right:
+        selected: 91
+        inside_unselected: 0
+        outside: 0
+        unknown: 1
+      l4_edge_left:
+        selected: 91
+        inside_unselected: 0
+        outside: 0
+        unknown: 1
     output:
     - l3_center
     - l4_center
@@ -246,4 +983,4 @@ min_crop_px: 96
 disagree_mm: 6.0
 anchor:
   step_ratio_max: 1.6
-  chain_gap_min: 0.0
+  chain_gap_min: 0.15

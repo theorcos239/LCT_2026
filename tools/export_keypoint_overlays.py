@@ -281,13 +281,15 @@ def main() -> None:
             by_fold = predictors_by_fold(args.run, args.device)
             if not by_fold:
                 raise SystemExit("нет fold*.pt для OOF")
-            ensemble = load_predictor(args.run, device=args.device)
+            excluded = sum(frame["fold"] not in by_fold for frame in frames)
+            frames = [frame for frame in frames if frame["fold"] in by_fold]
+            if excluded:
+                print(f"OOF: пропущено {excluded} кадров без чекпоинта своего фолда")
+            if not frames:
+                raise SystemExit("нет кадров с настоящими OOF-весами")
 
             def get_pred(frame):
-                fold = frame["fold"]
-                if fold in by_fold:
-                    return by_fold[fold]
-                return ensemble
+                return by_fold[frame["fold"]]
         else:
             print(f"загрузка ансамбля из {args.run} ...")
             predictor = load_predictor(args.run, device=args.device)

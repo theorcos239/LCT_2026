@@ -60,6 +60,7 @@ from __future__ import annotations
 
 import sys
 import json
+import hashlib
 from pathlib import Path
 
 import numpy as np
@@ -171,7 +172,8 @@ def axis_from_points(get, params: dict | None = None) -> dict | None:
     sources = tilt_sources(shape_points, shape_visible, shape_names, MM_PER_PX)
     curve = curve_descriptors(shape_points, shape_visible, shape_names, MM_PER_PX)
     params = params or {}
-    sigmas = source_variances(sources, curve, params)
+    sigmas = source_variances(sources, curve, params,
+                              point_sigma_px=params.get('point_sigma_px'))
     fused = fused_tilt(sources, sigmas)
     decision = axis_decision(fused['theta_fused_deg'], fused['sigma_deg'],
                              fused['Q'], fused['n_sources'],
@@ -204,11 +206,20 @@ def fuse_axis_with_contour(point_axis: dict, contour_axis: dict) -> dict:
     curve = dict(point_axis.get('curve') or {})
     params = {**(point_axis.get('variance_params') or {}),
               'contour_curvature_mm': contour_axis.get('curvature_mm') or 0.0}
-    sigmas = source_variances(sources, curve, params)
+    sigmas = source_variances(sources, curve, params,
+                              point_sigma_px=params.get('point_sigma_px'))
     fused = fused_tilt(sources, sigmas)
     decision = axis_decision(fused['theta_fused_deg'], fused['sigma_deg'],
                              fused['Q'], fused['n_sources'],
                              {'uncertainty_k': params.get('uncertainty_k', 1.0)})
+    # Контурная конструкция пометила большой угол как изгиб. При конфликте
+    # не превращаем его в автоматический брак: у модели точек и контура разные
+    # ошибки, а отдельный порог сколиоза на имеющейся разметке не обоснован.
+    if (decision['state'] == 'unsuitable'
+            and 'axis:curved_suppressed' in contour_axis.get('flags', [])):
+        decision = {**decision, 'state': 'undetermined', 'violated': None,
+                    'text': '', 'reasons': [*decision['reasons'],
+                                           'scoliosis_like_contour']}
     out = dict(point_axis)
     out.update({
         'angle_deg': (None if fused['theta_fused_deg'] is None
@@ -226,6 +237,35 @@ def fuse_axis_with_contour(point_axis: dict, contour_axis: dict) -> dict:
         flags.append('axis:needs_review')
     out['flags'] = flags
     return out
+
+
+def axis_from_contour_only(contour_axis: dict, params: dict | None = None,
+                           *, points_required: bool = False) -> dict:
+    """Та же трёхсостоянийная политика при недоступных точках.
+
+    Применяется только после G2; до этого сервис использует исходный
+    контурный критерий с его собственным калиброванным порогом.
+    """
+    params = params or {}
+    if points_required:
+        decision = axis_decision(None, None, None, 0, params)
+        return {**contour_axis, **decision, 'source': 'contour_fused_policy',
+                'flags': [*contour_axis.get('flags', []), 'axis:points_missing']}
+    angle = contour_axis.get('angle_deg')
+    if angle is None:
+        decision = axis_decision(None, None, None, 0, params)
+        return {**contour_axis, **decision, 'source': 'contour_fused_policy'}
+    src = {'theta_contour_deg': float(angle)}
+    sig = source_variances(src, {'step_mm': 30.0},
+                           {**params, 'contour_curvature_mm':
+                            contour_axis.get('curvature_mm') or 0.0})
+    fused = fused_tilt(src, sig)
+    decision = axis_decision(
+        fused['theta_fused_deg'], fused['sigma_deg'], fused['Q'], 1,
+        {**params, 'min_sources': 1})
+    return {**contour_axis, **decision, 'source': 'contour_fused_policy',
+            'angle_deg': fused['theta_fused_deg'], 'sigma_deg': fused['sigma_deg'],
+            'Q': fused['Q'], 'weights': fused['weights']}
 
 
 def roi_from_points(get, shape: tuple[int, int], side: str) -> dict | None:
@@ -307,18 +347,64 @@ class KeypointBackend:
                  quiet: bool = True, folds: list[int] | None = None,
                  multicrop: bool = False, use_for_verdict: bool = True):
         self.predictor, self.error = None, None
-        self.multicrop = bool(multicrop)
+        self.multicrop_requested = bool(multicrop)
+        self.multicrop = False
+        self.multicrop_variant = 'auto'
+        self.multicrop_gate_passed = False
         self.use_for_verdict = bool(use_for_verdict)
         self.axis_gate_passed = False
         self.axis_params = {}
         try:
-            from dxa_qc.infer import RUN_DIR, load_predictor
+            from dxa_qc.infer import RUN_DIR, fold_checkpoints, load_predictor
             self.predictor = load_predictor(run_dir, device, folds)
+            run_path = Path(run_dir or RUN_DIR)
+            def same_weights(expected):
+                if not isinstance(expected, dict) or not expected:
+                    return False
+                for checkpoint in fold_checkpoints(run_path, folds):
+                    fold = checkpoint.stem.removeprefix('fold')
+                    digest = hashlib.sha256()
+                    with checkpoint.open('rb') as stream:
+                        for block in iter(lambda: stream.read(1024 * 1024), b''):
+                            digest.update(block)
+                    if expected.get(fold) != digest.hexdigest():
+                        return False
+                return set(expected) == {p.stem.removeprefix('fold')
+                                         for p in fold_checkpoints(run_path, folds)}
             gate_path = Path(run_dir or RUN_DIR) / 'metrics_axis_fused.json'
             if gate_path.exists():
                 gate = json.loads(gate_path.read_text(encoding='utf-8'))
-                self.axis_gate_passed = bool(gate.get('gate_passed'))
+                self.axis_gate_passed = (bool(gate.get('gate_passed'))
+                                         and same_weights(gate.get('checkpoint_sha256')))
                 self.axis_params = dict(gate.get('runtime_params') or {})
+            semantic_gate_path = Path(run_dir or RUN_DIR) / 'metrics_semantic_gates.json'
+            consensus_gate_path = Path(run_dir or RUN_DIR) / 'metrics_crop_consensus.json'
+            if consensus_gate_path.exists():
+                consensus = json.loads(consensus_gate_path.read_text(encoding='utf-8'))
+                from dxa_qc.multicrop import DEFAULT_SEMANTIC_CONFIG
+                self.multicrop_gate_passed = (bool(consensus.get('gate_passed'))
+                    and bool((consensus.get('checks') or {}).get('five_folds'))
+                    and same_weights(consensus.get('checkpoint_sha256'))
+                    and hashlib.sha256(DEFAULT_SEMANTIC_CONFIG.read_bytes()).hexdigest()
+                    == consensus.get('semantic_config_sha256'))
+                if self.multicrop_gate_passed:
+                    self.multicrop_variant = 'consensus'
+            if semantic_gate_path.exists():
+                semantic = json.loads(semantic_gate_path.read_text(encoding='utf-8'))
+                if isinstance(semantic, list):
+                    auto = next((r for r in semantic if r.get('variant') == 'semantic_auto'), {})
+                    auto_gate_passed = bool(auto.get('gate_passed')) and bool(
+                        auto.get('provenance_verified', False)) and bool(
+                            (auto.get('checks') or {}).get('five_fold_oof')) and same_weights(
+                            auto.get('checkpoint_sha256'))
+                    anchor_path = run_path / 'thresholds_anchor.csv'
+                    auto_gate_passed = (auto_gate_passed and anchor_path.exists()
+                                        and hashlib.sha256(anchor_path.read_bytes()).hexdigest()
+                                        == auto.get('anchor_thresholds_sha256'))
+                    if auto_gate_passed and not self.multicrop_gate_passed:
+                        self.multicrop_gate_passed = True
+                        self.multicrop_variant = 'auto'
+            self.multicrop = self.multicrop_requested and self.multicrop_gate_passed
         except Exception as e:                       # noqa: BLE001 — причина уходит во флаг
             self.error = f'{type(e).__name__}: {e}'
             if not quiet:
@@ -340,14 +426,19 @@ class KeypointBackend:
         в наборе точек бедра стороны нет, обучение шло только на левых.
         """
         img, flags = to_model_uint8(px)
+        if self.multicrop_requested and not self.multicrop_gate_passed:
+            flags.append('keypoints:semantic_gate_failed')
         side = SIDE.get(region, region)
         w = img.shape[1]
         if side == 'rhip':
             img = img[:, ::-1].copy()
 
-        out = (self.predictor.predict_semantic(img)
-               if side == 'spine' and self.multicrop
-               else self.predictor.predict(img))
+        if side == 'spine' and self.multicrop:
+            out = (self.predictor.predict_consensus(img)
+                   if self.multicrop_variant == 'consensus'
+                   else self.predictor.predict_semantic(img))
+        else:
+            out = self.predictor.predict(img)
         coords = np.asarray(out['coords'], dtype=float).copy()
         if side == 'rhip':
             coords[:, 0] = _flip_x(coords[:, 0], w)

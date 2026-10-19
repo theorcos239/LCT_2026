@@ -1,0 +1,6 @@
+fold,frames,level_errors,reliable_frames,level_errors_accepted,level_errors_rejected,coverage,reason_counts
+all,72,11,55,5,6,0.7638888888888888,"{'centers_missing': 14, 'step_irregular': 1, 'th12_inconsistent': 2}"
+0,19,4,17,2,2,0.8947368421052632,{'centers_missing': 2}
+1,18,5,11,1,4,0.6111111111111112,"{'centers_missing': 6, 'step_irregular': 1}"
+2,16,1,14,1,0,0.875,"{'th12_inconsistent': 1, 'centers_missing': 1}"
+3,19,1,13,1,0,0.6842105263157895,"{'centers_missing': 5, 'th12_inconsistent': 1}"

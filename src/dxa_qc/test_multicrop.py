@@ -91,3 +91,33 @@ def test_unreliable_anchor_reports_numbering_doubt():
     q = anchor_quality(pred, {"anchor": {"step_ratio_max": 1.6, "chain_gap_min": 0}})
     assert not q["reliable"]
     assert "centers_missing" in q["reasons"]
+
+
+def test_close_hypotheses_make_anchor_ambiguous():
+    pred = _prediction([50, 100, 150, 200])
+    pred["chain_hypotheses"] = {"used": True, "n_hypotheses": 2,
+                                "score_gap_top2": .05}
+    q = anchor_quality(pred, {"anchor": {"chain_gap_min": .15}})
+    assert "chain_ambiguous" in q["reasons"]
+
+
+def test_shifted_chain_conflicts_with_th12():
+    pred = _prediction([100, 150, 200, 250])
+    pred["names"] = NAMES + ["th12_bottom"]
+    pred["coords"] = np.vstack([pred["coords"], [100.0, 145.0]])
+    pred["visible"] = np.ones(5, bool)
+    pred["chain_hypotheses"] = {"used": True, "n_hypotheses": 2,
+                                "score_gap_top2": 2.0}
+    q = anchor_quality(pred, {"anchor": {"chain_gap_min": .15}})
+    assert "th12_inconsistent" in q["reasons"]
+
+
+def test_wrong_pelvis_position_rejects_anchor():
+    pred = _prediction([100, 150, 200, 250])
+    pred["names"] = NAMES + ["iliac_left", "iliac_right"]
+    pred["coords"] = np.vstack([pred["coords"], [180.0, 380.0], [20.0, 380.0]])
+    pred["visible"] = np.ones(6, bool)
+    pred["chain_hypotheses"] = {"used": True, "n_hypotheses": 2,
+                                "score_gap_top2": 2.0}
+    q = anchor_quality(pred, {"anchor": {"chain_gap_min": .15}})
+    assert "pelvis_inconsistent" in q["reasons"]

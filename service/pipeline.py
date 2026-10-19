@@ -41,7 +41,7 @@ VIOLATIONS = {
     'spine_artifacts': 'поясничный отдел: посторонние предметы или артефакты',
     'hip_rotation':    'проксимальный отдел бедра: некорректная ротация',
     'hip_roi':         'проксимальный отдел бедра: недостаточные отступы области интереса',
-    'undetermined':    'анатомическая область не определена',
+    'undetermined':    'требуется проверка качества кадра человеком',
 }
 
 REGION_RU = {'spine': 'поясничный отдел позвоночника',
@@ -57,6 +57,14 @@ COLUMNS = ['path_to_study', 'study_uid', 'image_uid', 'anatomical_region',
 # `axis_disagree_deg` у spine_qc, 5 мм — шестая часть запаса ROI в 30 мм.
 AXIS_METHODS_DISAGREE_DEG = 2.0
 ROI_METHODS_DISAGREE_MM = 5.0
+
+
+def record_axis_review(out: dict, policy: str) -> None:
+    """Не превращать неопределённый угол в класс «качественный снимок»."""
+    out['flags'].append('axis:needs_review')
+    out['violations'].append('undetermined')
+    if policy == 'violation':
+        out['violations'].append('spine_axis')
 
 
 @dataclass
@@ -84,13 +92,15 @@ class Analyzer:
     # отступы от найденных ориентиров буквально по рисунку 6 ТЗ (F1 0.35).
     # Отступы по рисунку 6 считаются и показываются в обоих режимах.
     roi_rule: str = 'scan_length'
+    axis_undetermined_policy: str = 'review'
 
     @classmethod
     def load(cls, hip_method: str = 'kit2', strict_region: bool = True,
              keypoints: bool = False, keypoints_dir=None, cnn: bool = True,
              cnn_oof: bool = False, roi_rule: str = 'scan_length',
              keypoints_multicrop: bool = False,
-             keypoints_verdict: bool = False) -> 'Analyzer':
+             keypoints_verdict: bool = False,
+             axis_undetermined_policy: str = 'review') -> 'Analyzer':
         """keypoints=True подключает модель точек в диагностическом режиме.
 
         Подмена контура разрешается отдельно через keypoints_verdict=True:
@@ -104,6 +114,8 @@ class Analyzer:
         """
         from region_clf import RegionClassifier
         from spine_qc import SpineQC
+        if axis_undetermined_policy not in ('review', 'violation'):
+            raise ValueError('axis_undetermined_policy: review или violation')
         net = None
         if cnn or cnn_oof:
             try:
@@ -124,7 +136,8 @@ class Analyzer:
                 kp = _Unavailable(f'{type(e).__name__}: {e}')
         return cls(region=RegionClassifier(), spine=SpineQC(),
                    hip_method=hip_method, strict_region=strict_region, keypoints=kp,
-                   cnn=net, roi_rule=roi_rule)
+                   cnn=net, roi_rule=roi_rule,
+                   axis_undetermined_policy=axis_undetermined_policy)
 
     # ------------------------------------------------------------------ #
     def _keypoints(self, px: np.ndarray, region: str, out: dict) -> dict | None:
@@ -248,9 +261,21 @@ class Analyzer:
                 if a is not None and b is not None and abs(a - b) > AXIS_METHODS_DISAGREE_DEG:
                     out['flags'].append('axis:keypoints_vs_contour_disagree')
                 if kp['axis'].get('state') == 'undetermined':
-                    out['flags'].append('axis:needs_review')
+                    record_axis_review(out, self.axis_undetermined_policy)
                 out['details']['spine']['axis'] = kp['axis']
                 res['criteria']['axis'] = kp['axis']
+            elif (self.keypoints is not None
+                  and getattr(self.keypoints, 'use_for_verdict', False)
+                  and getattr(self.keypoints, 'axis_gate_passed', False)):
+                from .keypoints_backend import axis_from_contour_only
+                contour_axis = res['criteria']['axis']
+                out['details']['spine']['axis_contour'] = contour_axis
+                reviewed = axis_from_contour_only(
+                    contour_axis, getattr(self.keypoints, 'axis_params', {}),
+                    points_required=True)
+                res['criteria']['axis'] = reviewed
+                if reviewed['state'] == 'undetermined':
+                    record_axis_review(out, self.axis_undetermined_policy)
             art = res['criteria']['artifacts']
             a = self._cnn('artifacts', px, 'spine', art.get('score'), out)
             if a is not None:
@@ -336,6 +361,8 @@ class Analyzer:
         # Свод по области: 1 - П(1 - p) по критериям, у которых есть измерение.
         # Кадр, где ни один критерий не измерился, остаётся с None.
         out['quality_probability'] = probability.combine(out['probabilities'].values())
+        if 'undetermined' in out['violations']:
+            out['quality_probability'] = max(out['quality_probability'] or 0.0, 0.5)
         return out
 
     # ------------------------------------------------------------------ #

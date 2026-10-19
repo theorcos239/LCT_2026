@@ -79,7 +79,7 @@ def axis_decision(theta_deg: float | None, sigma_deg: float | None,
     if theta_deg is None or sigma_deg is None or n_sources < int(p['min_sources']):
         why.append('sources_missing')
         state = 'undetermined'
-    elif q is not None and q > float(p['chi2_max']):
+    elif q is not None and q > (6.63 if n_sources == 2 else float(p['chi2_max'])):
         why.append('sources_disagree')
         state = 'undetermined'
     else:

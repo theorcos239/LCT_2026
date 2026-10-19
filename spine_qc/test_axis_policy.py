@@ -25,3 +25,7 @@ def test_sources_disagree_is_undetermined():
 
 def test_missing_sources_is_undetermined():
     assert axis_decision(2.0, .2, 0.0, 1)["state"] == "undetermined"
+
+
+def test_two_sources_use_correct_chi_square_limit():
+    assert axis_decision(7.0, .2, 7.0, 2)["state"] == "undetermined"

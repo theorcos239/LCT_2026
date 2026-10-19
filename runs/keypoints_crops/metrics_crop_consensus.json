@@ -1,0 +1,91 @@
+{
+  "baseline": {
+    "spine_frames": 73,
+    "level_evaluable_frames": 72,
+    "level_error_frames_raw": 11,
+    "level_error_frames_accepted": 11,
+    "accepted_spine_frames": 73,
+    "abstain_frames": 0,
+    "coverage": 1.0,
+    "spine_p90_mm": 10.724193763732936,
+    "accepted_spine_p90_mm": 10.724193763732936,
+    "axis_p90_deg": 1.24630366563797,
+    "accepted_axis_p90_deg": 1.24630366563797,
+    "endplate_p90_deg": 2.2360170004994453,
+    "accepted_endplate_p90_deg": 2.2360170004994453,
+    "edge_eligible_frames": 73,
+    "three_edge_pairs_rate": 0.9315068493150684,
+    "centers_p90_mm": 24.938508987426758,
+    "center_errors_over_15mm": 32,
+    "level_error_image_ids": [
+      "ee4ada78a1",
+      "1500195a06",
+      "8b8f4ec0e7",
+      "ea91c3a6cd",
+      "ac80f5f483",
+      "511282fa4c",
+      "1a18323a02",
+      "68c9b7310c",
+      "960a3fff0b",
+      "90dae36177",
+      "35e429ff52"
+    ]
+  },
+  "consensus": {
+    "spine_frames": 73,
+    "level_evaluable_frames": 72,
+    "level_error_frames_raw": 11,
+    "level_error_frames_accepted": 6,
+    "accepted_spine_frames": 64,
+    "abstain_frames": 9,
+    "coverage": 0.8767123287671232,
+    "spine_p90_mm": 10.832817252571814,
+    "accepted_spine_p90_mm": 8.200566646816855,
+    "axis_p90_deg": 1.1729137326921941,
+    "accepted_axis_p90_deg": 1.156640553290723,
+    "endplate_p90_deg": 2.2360170004994453,
+    "accepted_endplate_p90_deg": 1.7871076669078585,
+    "edge_eligible_frames": 73,
+    "three_edge_pairs_rate": 0.9315068493150684,
+    "centers_p90_mm": 24.167004684626836,
+    "center_errors_over_15mm": 33,
+    "level_error_image_ids": [
+      "ee4ada78a1",
+      "1500195a06",
+      "8b8f4ec0e7",
+      "ea91c3a6cd",
+      "ac80f5f483",
+      "511282fa4c",
+      "1a18323a02",
+      "68c9b7310c",
+      "960a3fff0b",
+      "90dae36177",
+      "35e429ff52"
+    ],
+    "baseline_level_errors_on_accepted": 6,
+    "corrected_levels_on_accepted": 0,
+    "introduced_levels_on_accepted": 0
+  },
+  "checks": {
+    "five_folds": false,
+    "levels_raw_not_worse": true,
+    "spine_p90_not_worse": false,
+    "axis_p90_not_worse": true,
+    "coverage_at_least_80pct": true
+  },
+  "gate_passed": false,
+  "folds": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "mode": "consensus",
+  "checkpoint_sha256": {
+    "0": "bb97a10562d2f8212bf66bb71616d423cd2a748c689472f7e6406b719f47b84e",
+    "1": "ba2fa775447cb7aaad63cede525494904126bb43c1d5b38fcd2fe04bfb538583",
+    "2": "919bcb03e6f34c521eea49100636cad30e01a6c3bf6a4cc8bc66ffab33ca9816",
+    "3": "d02cb8594a9e7849f686388134a887fb3d7a886f5f73c58317f18891783e08bf"
+  },
+  "semantic_config_sha256": "c341aa97672397a3d85d85c54cd63319a8428d6a7a98b9bb1d9145b4bb91fd07"
+}

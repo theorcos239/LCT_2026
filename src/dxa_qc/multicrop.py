@@ -256,20 +256,51 @@ def anchor_quality(prediction: dict, config: dict) -> dict:
         reasons.append("centers_missing")
         return {"reliable": False, "reasons": reasons, "step_px": None}
     centers = np.asarray([prediction["coords"][idx[n]] for n in CENTERS], float)
+    step = np.mean(np.diff(centers, axis=0), axis=0)
+    step_sq = float(step @ step)
     steps = np.linalg.norm(np.diff(centers, axis=0), axis=1)
     ratio = float(steps.max() / max(steps.min(), 1e-6))
-    if ratio > float(config.get("anchor", {}).get("step_ratio_max", 1.6)):
+    anchor_cfg = config.get("anchor", {})
+    if step[1] <= 0 or step_sq < 1 or ratio > float(anchor_cfg.get("step_ratio_max", 1.6)):
         reasons.append("step_irregular")
     info = prediction.get("chain_hypotheses") or {}
     if not info.get("used"):
         reasons.append("chain_unavailable")
     gap = info.get("score_gap_top2")
-    gap_min = float(config.get("anchor", {}).get("chain_gap_min", 0.0))
-    if gap is not None and float(gap) < gap_min:
+    gap_min = float(anchor_cfg.get("chain_gap_min", 0.15))
+    if gap_min <= 0:
+        reasons.append("gap_uncalibrated")
+    elif info.get("n_hypotheses", 1) > 1 and (gap is None or float(gap) < gap_min):
         reasons.append("chain_ambiguous")
+
+    # Вся ровная цепочка может попасть на соседние позвонки. Проверяем
+    # независимые анатомические ориентиры до запуска кропов.
+    def along(name: str, origin: np.ndarray) -> float | None:
+        j = idx.get(name)
+        if j is None or not prediction["visible"][j] or step_sq < 1:
+            return None
+        return float((np.asarray(prediction["coords"][j]) - origin) @ step / step_sq)
+
+    th12 = along("th12_bottom", centers[0])
+    if th12 is not None and not -1.5 <= th12 <= -0.05:
+        reasons.append("th12_inconsistent")
+    disc = along("disc_th12_l1", centers[0])
+    if disc is not None and not -1.5 <= disc <= 0.15:
+        reasons.append("th12_inconsistent")
+    top = along("th12_top", centers[0])
+    if top is not None and th12 is not None and top >= th12 - 0.2:
+        reasons.append("th12_inconsistent")
+    pelvis = [along(name, centers[-1]) for name in ("iliac_right", "iliac_left")]
+    if all(value is not None for value in pelvis):
+        if not all(-0.7 <= value <= 1.8 for value in pelvis):
+            reasons.append("pelvis_inconsistent")
+        left = np.asarray(prediction["coords"][idx["iliac_left"]])
+        right = np.asarray(prediction["coords"][idx["iliac_right"]])
+        if not min(left[0], right[0]) < centers[-1, 0] < max(left[0], right[0]):
+            reasons.append("pelvis_inconsistent")
     return {
         "reliable": not reasons,
-        "reasons": reasons,
+        "reasons": sorted(set(reasons)),
         "step_px": float(np.median(steps)),
         "step_vector": np.mean(np.diff(centers, axis=0), axis=0).tolist(),
     }

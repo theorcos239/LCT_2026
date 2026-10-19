@@ -57,6 +57,21 @@ class Predictor:
         self.regions = P.from_config(self.cfg)[1]
         self.thresholds = self._load_thresholds(checkpoints)
         self.crop_thresholds = self._load_crop_thresholds(checkpoints)
+        self.anchor_gap_min = self._load_anchor_gap(checkpoints)
+
+    @staticmethod
+    def _load_anchor_gap(checkpoints) -> float:
+        """OOF-фолд получает порог с других фолдов; ансамбль — общий."""
+        path = Path(checkpoints[0]).parent / "thresholds_anchor.csv"
+        if not path.exists():
+            return .15
+        table = pd.read_csv(path)
+        fold = (int(Path(checkpoints[0]).stem.removeprefix("fold"))
+                if len(checkpoints) == 1 else -1)
+        row = table[table.fold == fold]
+        if row.empty:
+            raise ValueError(f"{path}: нет порога для fold={fold}")
+        return float(row.iloc[0].gap_min)
 
     def _load_thresholds(self, checkpoints) -> np.ndarray:
         """Пороги видимости, откалиброванные на OOF; иначе общий порог из конфига."""
@@ -143,15 +158,28 @@ class Predictor:
         cfg = config
         if cfg is None:
             cfg = self.cfg.get("infer", {}).get("multicrop", {})
+        if cfg.get("mode") == "consensus":
+            return self.predict_consensus(image, cfg.get("config"))
         if cfg.get("mode") == "semantic" or cfg.get("version") == "semantic-v2":
             semantic_cfg = cfg.get("config") if isinstance(cfg, dict) else None
-            return predict_semantic(self, image, semantic_cfg)
+            return self.predict_semantic(image, semantic_cfg)
         return predict_multicrop(self, image, cfg)
+
+    def predict_consensus(self, image: np.ndarray,
+                          config: dict | str | Path | None = None,
+                          box_mode: str = "fixed") -> dict:
+        """Фиксированные семантические окна и согласование кандидатов в мм."""
+        from .crop_consensus import predict_consensus
+        return predict_consensus(self, image, config, box_mode)
 
     def predict_semantic(self, image: np.ndarray,
                          config: dict | str | Path | None = None) -> dict:
-        from .multicrop import predict_semantic
-        return predict_semantic(self, image, config)
+        from .multicrop import load_semantic_config, predict_semantic
+        cfg = load_semantic_config(config)
+        if config is None or isinstance(config, (str, Path)):
+            cfg = {**cfg, "anchor": {**cfg.get("anchor", {}),
+                                     "chain_gap_min": self.anchor_gap_min}}
+        return predict_semantic(self, image, cfg)
 
 
 def fold_checkpoints(run_dir: str | Path | None = None,

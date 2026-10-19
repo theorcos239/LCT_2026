@@ -1,0 +1,6 @@
+fold,gap_min,train_correct_rejected,test_correct_rejected,test_level_errors_rejected
+0,0.4557187982916895,0,0,1
+1,0.29516071458532145,0,0,0
+2,0.4557187982916895,0,0,0
+3,0.4557187982916895,0,0,0
+-1,0.4557187982916895,0,0,0
