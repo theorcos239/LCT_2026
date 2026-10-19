@@ -38,7 +38,8 @@ def _rotate(x: torch.Tensor, degrees: float) -> torch.Tensor:
 
 
 class Predictor:
-    def __init__(self, checkpoints: list[str | Path], device: str = "cpu"):
+    def __init__(self, checkpoints: list[str | Path], device: str = "cpu",
+                 anchor_gap_min: float | None = None):
         self.device = torch.device(device)
         self.models, self.cfg, self.names = [], None, None
         for path in checkpoints:
@@ -57,7 +58,8 @@ class Predictor:
         self.regions = P.from_config(self.cfg)[1]
         self.thresholds = self._load_thresholds(checkpoints)
         self.crop_thresholds = self._load_crop_thresholds(checkpoints)
-        self.anchor_gap_min = self._load_anchor_gap(checkpoints)
+        self.anchor_gap_min = (self._load_anchor_gap(checkpoints)
+                               if anchor_gap_min is None else float(anchor_gap_min))
 
     @staticmethod
     def _load_anchor_gap(checkpoints) -> float:

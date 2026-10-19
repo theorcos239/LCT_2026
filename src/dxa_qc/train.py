@@ -214,7 +214,9 @@ def run_fold(cfg: dict, data: dict, fold: int, device: torch.device,
         if checkpoint_now and spine_visible.any():
             # Отбор по хвосту делаем на рабочем инференсе: одиночный проход и
             # TTA + цепочка могут ранжировать эпохи в противоположном порядке.
-            predictor = E.Predictor([best_path], str(device))
+            # Порог якоря калибруется по OOF уже после обучения; фолды 0–3
+            # выбирали эпоху без него, со значением по умолчанию.
+            predictor = E.Predictor([best_path], str(device), anchor_gap_min=.15)
             predictor.models[0] = ema.shadow
             tta_pred = np.stack([
                 predictor.predict(np.clip(np.asarray(data["images"][j]), 0, 255)
