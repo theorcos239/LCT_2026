@@ -249,6 +249,7 @@ async def analyze(file: UploadFile = File(...)) -> JSONResponse:
         'quality_class': int(bool(res['violations'])),
         'violation_type': ';'.join(res['violations']),
         'violation_description': [VIOLATIONS[v] for v in res['violations']],
+        'scoliosis': res.get('scoliosis', ''),
         'region_confidence': res.get('region_confidence'),
         'quality_probability': res.get('quality_probability'),
         'probabilities': res.get('probabilities', {}),

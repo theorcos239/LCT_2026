@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from .spine_shape import (_angle_vertical, curve_descriptors, fused_tilt, source_variances,
+from .spine_shape import (_angle_vertical, apply_scoliosis_to_axis, assess_scoliosis,
+                          curve_descriptors, fused_tilt, source_variances,
                           tilt_sources)
 
 
@@ -65,3 +66,72 @@ def test_c_curve_center_bias_matches_formula():
     measured = _angle_vertical(points)
     expected = np.degrees(np.arctan(kappa_l * vertex))
     assert abs(measured - expected) < .1
+
+
+def test_assess_scoliosis_thresholds():
+    assert assess_scoliosis({"available": False})["present"] is False
+    # Ниже mid-band — нет.
+    low = assess_scoliosis({"available": True, "segment_range_deg": 8.5,
+                            "lateral_dev_mm": 3.0})
+    assert not low["present"] and low["strength"] == "none"
+    # Зазор 16–20 и экстремум без латерали — нет (иначе FP).
+    gap = assess_scoliosis({"available": True, "segment_range_deg": 18.0,
+                            "lateral_dev_mm": 3.0})
+    assert not gap["present"]
+    extreme_no_lat = assess_scoliosis(
+        {"available": True, "segment_range_deg": 26.0, "lateral_dev_mm": 3.5})
+    assert not extreme_no_lat["present"]
+    # Mid-band: weak / strong.
+    weak = assess_scoliosis({"available": True, "segment_range_deg": 12.5,
+                             "lateral_dev_mm": 2.8})
+    assert weak["present"] and weak["strength"] == "weak"
+    strong = assess_scoliosis({"available": True, "segment_range_deg": 15.0,
+                               "lateral_dev_mm": 2.6})
+    assert strong["present"] and strong["strength"] == "strong"
+    # Экстремум только с достаточным lateral_dev.
+    extreme = assess_scoliosis(
+        {"available": True, "segment_range_deg": 20.7, "lateral_dev_mm": 4.7})
+    assert extreme["present"] and extreme["strength"] == "strong"
+
+
+def test_strong_scoliosis_suppresses_axis_violation():
+    axis = {"angle_deg": 7.0, "violated": True, "text": "брак",
+            "flags": [], "state": "unsuitable", "reasons": []}
+    scol = assess_scoliosis({"available": True, "segment_range_deg": 15.0,
+                             "lateral_dev_mm": 2.6})
+    out = apply_scoliosis_to_axis(axis, scol)
+    assert out["violated"] is False
+    assert out["state"] == "suitable"
+    assert "axis:scoliosis_suppressed" in out["flags"]
+
+
+def test_weak_scoliosis_needs_corroboration_to_review():
+    axis = {"angle_deg": 7.0, "violated": True, "text": "брак",
+            "flags": [], "state": "unsuitable", "reasons": []}
+    scol = assess_scoliosis({"available": True, "segment_range_deg": 12.5,
+                             "lateral_dev_mm": 2.8})
+    alone = apply_scoliosis_to_axis(axis, scol)
+    assert alone["violated"] is True
+    with_disagree = apply_scoliosis_to_axis(
+        {**axis, "flags": ["axis:estimates_disagree"]}, scol)
+    assert with_disagree["violated"] is None
+    assert with_disagree["state"] == "undetermined"
+    assert "axis:scoliosis_review" in with_disagree["flags"]
+
+
+def test_scoliosis_never_creates_violation():
+    axis = {"angle_deg": 1.0, "violated": False, "text": "",
+            "flags": [], "state": "suitable", "reasons": []}
+    scol = assess_scoliosis({"available": True, "segment_range_deg": 15.0,
+                             "lateral_dev_mm": 2.6})
+    out = apply_scoliosis_to_axis(axis, scol)
+    assert out["violated"] is False
+    assert "axis:scoliosis_suppressed" not in out["flags"]
+
+
+def test_assess_scoliosis_rejects_high_seg_false_positives():
+    """Типичные FP pack: seg 16–26 без метки сколиоза."""
+    for seg, lat in ((16.6, 3.8), (18.1, 3.0), (26.1, 3.8)):
+        out = assess_scoliosis({"available": True, "segment_range_deg": seg,
+                                "lateral_dev_mm": lat})
+        assert out["present"] is False, (seg, lat)

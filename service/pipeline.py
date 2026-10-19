@@ -246,6 +246,21 @@ class Analyzer:
             res = self.spine.analyze(px)
             out['details']['spine'] = res['criteria']
             out['flags'] += res['flags']
+            # Сколиоз — только по точкам L1–L4 (segment_range). Не тип
+            # нарушения ТЗ: поле отчёта + осторожная правка порогов оси.
+            # Импорт dxa_qc безопасен: _keypoints уже поднял src/ в sys.path
+            # при наличии бэкенда; без точек сколиоз просто пустой.
+            scoliosis = None
+            apply_scoliosis = None
+            if kp:
+                from dxa_qc.spine_shape import (apply_scoliosis_to_axis,
+                                               assess_scoliosis)
+                apply_scoliosis = apply_scoliosis_to_axis
+                diag = kp.get('axis_diagnostic') or kp.get('axis')
+                if diag and diag.get('scoliosis'):
+                    scoliosis = diag['scoliosis']
+                elif diag and diag.get('curve') is not None:
+                    scoliosis = assess_scoliosis(diag['curve'])
             # Ось — единственный критерий позвоночника, который модель точек
             # забирает: она меряет ту же конструкцию, что чертит эксперт, и
             # ошибка угла на OOF 0.50° при пороге 5°.
@@ -264,6 +279,7 @@ class Analyzer:
                     record_axis_review(out, self.axis_undetermined_policy)
                 out['details']['spine']['axis'] = kp['axis']
                 res['criteria']['axis'] = kp['axis']
+                scoliosis = kp['axis'].get('scoliosis') or scoliosis
             elif (self.keypoints is not None
                   and getattr(self.keypoints, 'use_for_verdict', False)
                   and getattr(self.keypoints, 'axis_gate_passed', False)):
@@ -273,9 +289,32 @@ class Analyzer:
                 reviewed = axis_from_contour_only(
                     contour_axis, getattr(self.keypoints, 'axis_params', {}),
                     points_required=True)
+                if apply_scoliosis is not None:
+                    reviewed = apply_scoliosis(reviewed, scoliosis)
                 res['criteria']['axis'] = reviewed
-                if reviewed['state'] == 'undetermined':
+                if reviewed.get('state') == 'undetermined':
                     record_axis_review(out, self.axis_undetermined_policy)
+            elif apply_scoliosis is not None and scoliosis is not None:
+                # Диагностические точки (gate выкл.): вердикт контурный, но
+                # сильный сколиоз по точкам гасит ложный «наклон хорды».
+                axis = apply_scoliosis(res['criteria']['axis'], scoliosis)
+                res['criteria']['axis'] = axis
+                out['details']['spine']['axis'] = axis
+                if (axis.get('violated') is None
+                        and 'axis:needs_review' in axis.get('flags', [])):
+                    record_axis_review(out, self.axis_undetermined_policy)
+            out['details']['spine']['scoliosis'] = scoliosis
+            if scoliosis and scoliosis.get('available'):
+                out['scoliosis'] = 'yes' if scoliosis.get('present') else 'no'
+            else:
+                out['scoliosis'] = ''
+            if scoliosis and scoliosis.get('present'):
+                out['flags'].append('scoliosis:present')
+
+            # Флаги оси после сколиоз-политики (suppress/review) — в общий список.
+            for f in res['criteria']['axis'].get('flags', []):
+                if f not in out['flags']:
+                    out['flags'].append(f)
             art = res['criteria']['artifacts']
             a = self._cnn('artifacts', px, 'spine', art.get('score'), out)
             if a is not None:
@@ -396,6 +435,8 @@ class Analyzer:
                 row[f'p_{key}'] = pv
             row['violation_type'] = ';'.join(res['violations'])
             row['violation_description'] = '; '.join(VIOLATIONS[v] for v in res['violations'])
+            # Сколиоз — справочное поле только для позвоночника (yes/no/пусто).
+            row['scoliosis'] = res.get('scoliosis', '')
             row['region_confidence'] = res['region_confidence']
             row['region_accepted'] = res['region_accepted']
             row['flags'] = ';'.join(res['flags'])

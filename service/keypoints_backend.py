@@ -34,14 +34,12 @@
   0.75 мм (p90 2.18) при разрыве между классами около 2.1 мм и требовании
   ТЗ ≈0.5 мм — это ровно та точность, которой не хватает контурной геометрии.
   Подменять один неуверенный измеритель другим неуверенным незачем.
-- **Укладка позвоночника.** Формально критерий — «видны верхние края
-  подвздошных костей», и у модели на это есть каналы `iliac_right/left` с
-  калиброванным порогом видимости. Предыдущая версия модели дорисовывала
-  гребень, которого нет (узнала отсутствие в 1 кадре из 11), а для этого
-  критерия это и есть пропуск нарушения. Текущая переобучена против
-  выдуманных точек, но нарушений укладки в эталоне шесть, на обученных
-  фолдах 0–1 — два: переводить вердикт не на чем. Видимость уходит в
-  диагностику, вердикт — за `spine_qc`.
+- **Гребни подвздошных (часть укладки).** Каналы `iliac_right/left` остаются
+  диагностикой: нарушений укладки в эталоне шесть, на фолдах 0–1 — два,
+  переводить вердикт гребней на них нельзя. Вердикт гребней — за `spine_qc`.
+- **Верхняя граница укладки (половина тела Th12) не проверяется.** Разметки
+  уровня Th12 в данных нет, проверять правило не на чем. Запас кадра сверху
+  считается и кладётся в отчёт как диагностика, но в вердикт не входит.
 - **Артефакты.** Канала под посторонние предметы в модели нет и не
   планировалось: это отдельная задача и отдельная модель.
 
@@ -72,7 +70,8 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from dxa_qc.metrics import axis_angle, axis_curvature   # noqa: E402 — после sys.path
-from dxa_qc.spine_shape import (curve_descriptors, fused_tilt, source_variances,
+from dxa_qc.spine_shape import (apply_scoliosis_to_axis, assess_scoliosis,
+                                curve_descriptors, fused_tilt, source_variances,
                                 tilt_sources)
 from hip_roi.geometry import BOTTOM_MM, LAT_MM, MM_PER_PX, TOP_MM, px2mm
 from spine_qc.criteria import axis_decision
@@ -178,23 +177,33 @@ def axis_from_points(get, params: dict | None = None) -> dict | None:
     decision = axis_decision(fused['theta_fused_deg'], fused['sigma_deg'],
                              fused['Q'], fused['n_sources'],
                              {'uncertainty_k': params.get('uncertainty_k', 1.0)})
+    # Сколиотическая дуга даёт большой угол хорды без дефекта укладки.
+    # Контур гасит такие кадры флагом curved_suppressed; здесь тот же смысл
+    # по кривизне центров (порог 12 мм — флаг axis:curved) + явный признак
+    # по segment_range L1–L4 (assess_scoliosis / apply_scoliosis_to_axis).
+    if decision['state'] == 'unsuitable' and 'axis:curved' in flags:
+        decision = {**decision, 'state': 'undetermined', 'violated': None,
+                    'text': '', 'reasons': [*decision['reasons'],
+                                           'scoliosis_like_curve']}
     if decision['state'] == 'undetermined':
         flags.append('axis:needs_review')
     correction = (None if fused['theta_fused_deg'] is None
                   else float(ang - fused['theta_fused_deg']))
-    return {'angle_deg': (None if fused['theta_fused_deg'] is None
-                          else round(float(fused['theta_fused_deg']), 2)),
-            'angle_centers_deg': round(ang, 2),
-            'angle_edges_deg': None if ang_edges is None else round(ang_edges, 2),
-            'curvature_mm': round(curvature, 1),
-            'disagreement_deg': None if disagree is None else round(disagree, 2),
-            'sigma_deg': fused['sigma_deg'], 'Q': fused['Q'],
-            'weights': fused['weights'], 'sources': sources, 'curve': curve,
-            'variance_params': params,
-            'correction_deg': correction, 'state': decision['state'],
-            'reasons': decision['reasons'],
-            'source': 'keypoints_fused', 'flags': flags,
-            'violated': decision['violated'], 'text': decision['text']}
+    result = {'angle_deg': (None if fused['theta_fused_deg'] is None
+                            else round(float(fused['theta_fused_deg']), 2)),
+              'angle_centers_deg': round(ang, 2),
+              'angle_edges_deg': None if ang_edges is None else round(ang_edges, 2),
+              'curvature_mm': round(curvature, 1),
+              'disagreement_deg': None if disagree is None else round(disagree, 2),
+              'sigma_deg': fused['sigma_deg'], 'Q': fused['Q'],
+              'weights': fused['weights'], 'sources': sources, 'curve': curve,
+              'variance_params': params,
+              'correction_deg': correction, 'state': decision['state'],
+              'reasons': decision['reasons'],
+              'source': 'keypoints_fused', 'flags': flags,
+              'violated': decision['violated'], 'text': decision['text'],
+              'scoliosis': assess_scoliosis(curve)}
+    return apply_scoliosis_to_axis(result, result['scoliosis'])
 
 
 def fuse_axis_with_contour(point_axis: dict, contour_axis: dict) -> dict:
@@ -214,13 +223,15 @@ def fuse_axis_with_contour(point_axis: dict, contour_axis: dict) -> dict:
                              {'uncertainty_k': params.get('uncertainty_k', 1.0)})
     # Контурная конструкция пометила большой угол как изгиб. При конфликте
     # не превращаем его в автоматический брак: у модели точек и контура разные
-    # ошибки, а отдельный порог сколиоза на имеющейся разметке не обоснован.
+    # ошибки. Явный сколиоз по segment_range дожимается ниже.
     if (decision['state'] == 'unsuitable'
             and 'axis:curved_suppressed' in contour_axis.get('flags', [])):
         decision = {**decision, 'state': 'undetermined', 'violated': None,
                     'text': '', 'reasons': [*decision['reasons'],
                                            'scoliosis_like_contour']}
     out = dict(point_axis)
+    scoliosis = (point_axis.get('scoliosis')
+                 or assess_scoliosis(point_axis.get('curve')))
     out.update({
         'angle_deg': (None if fused['theta_fused_deg'] is None
                       else round(float(fused['theta_fused_deg']), 2)),
@@ -231,12 +242,13 @@ def fuse_axis_with_contour(point_axis: dict, contour_axis: dict) -> dict:
                                       - fused['theta_fused_deg'])),
         'state': decision['state'], 'reasons': decision['reasons'],
         'violated': decision['violated'], 'text': decision['text'],
+        'scoliosis': scoliosis,
     })
     flags = [f for f in out.get('flags', []) if f != 'axis:needs_review']
     if decision['state'] == 'undetermined':
         flags.append('axis:needs_review')
     out['flags'] = flags
-    return out
+    return apply_scoliosis_to_axis(out, scoliosis)
 
 
 def axis_from_contour_only(contour_axis: dict, params: dict | None = None,
@@ -330,6 +342,8 @@ def bulge_from_points(get) -> dict | None:
         return None
     return {'bulge_mm': round(px2mm(float(medial[0]) - float(minor[0])), 2),
             'source': 'keypoints', 'verdict': None}
+
+
 
 
 # --------------------------------------------------------------------------- #
@@ -513,6 +527,7 @@ class KeypointBackend:
                 flags.append('keypoints:axis_gate_failed')
             res['iliac'] = {side: bool(kp['visible'][idx[f'iliac_{side}']])
                             for side in ('right', 'left') if f'iliac_{side}' in idx}
+
         else:
             roi = roi_from_points(get, px.shape, region)
             res['roi_diagnostic'] = roi
