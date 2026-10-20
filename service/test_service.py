@@ -632,6 +632,53 @@ def test_batch_api() -> None:
     check('задание старше срока удаляется вместе с файлами',
           job['id'] not in api.JOBS and not workdir.exists())
 
+
+def test_job_privacy() -> None:
+    """Общий сервер: чужие задания не видны в /jobs, своё можно удалить."""
+    import io
+    import zipfile
+
+    try:
+        from fastapi.testclient import TestClient
+    except (ImportError, RuntimeError):
+        check('изоляция заданий (пропущено: нет fastapi или httpx)', True)
+        return
+    from . import api
+
+    tmp = Path(tempfile.mkdtemp(prefix='dxa_priv_'))
+    try:
+        (tmp / 'study').mkdir()
+        dcm = synthetic_dicom(tmp / 'study' / 'a.dcm')
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, 'w') as z:
+            z.write(dcm, 'study/a.dcm')
+        c = TestClient(api.app)
+        alice, bob = 'alice-0000-1111', 'bob-2222-3333'
+        r = c.post('/batch?fmt=csv&wait=true', headers={'X-DXA-Client': alice},
+                   files={'file': ('s.zip', buf.getvalue(), 'application/zip')})
+        job = r.json()
+        check('POST /batch с X-DXA-Client', r.status_code == 200 and job.get('state') in ('done', 'failed'),
+              str(job))
+        jid = job['id']
+        check('номер задания — полный uuid', len(jid) == 32)
+        mine = [j['id'] for j in c.get('/jobs', headers={'X-DXA-Client': alice}).json()['jobs']]
+        theirs = [j['id'] for j in c.get('/jobs', headers={'X-DXA-Client': bob}).json()['jobs']]
+        anon = [j['id'] for j in c.get('/jobs').json()['jobs']]
+        check('GET /jobs: своё задание видно владельцу', jid in mine)
+        check('GET /jobs: чужое задание не видно', jid not in theirs and jid not in anon)
+        workdir = api.JOBS[jid].workdir
+        d = c.delete(f'/jobs/{jid}')
+        check('DELETE /jobs/{id} стирает задание и файлы',
+              d.status_code == 200 and jid not in api.JOBS and not workdir.exists())
+        check('после удаления задание недоступно', c.get(f'/jobs/{jid}').status_code == 404)
+        orphan = api.JOBS_DIR / 'orphan-from-old-run'
+        orphan.mkdir(parents=True, exist_ok=True)
+        api._cleanup_jobs(now=time.time() + api.JOB_TTL_HOURS * 3600 + 1)
+        check('каталог прошлого запуска удаляется по сроку', not orphan.exists())
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_wrapper_folder() -> None:
     """Архив, сжатый из папки: папка-обёртка не склеивает исследования.
 
@@ -672,6 +719,7 @@ def main() -> int:
     test_archive_traversal()
     print('API')
     test_api()
+    test_job_privacy()
 
     if not args.fast:
         if not DATA.exists():

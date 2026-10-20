@@ -190,7 +190,7 @@
     </div>
 
     <div id="recent" hidden>
-      <div class="h3">Недавние задания</div>
+      <div class="h3">Ваши недавние задания</div>
       <div id="recentList"></div>
     </div>
 
@@ -221,7 +221,9 @@
         <a class="btn" id="dlOverlays">Визуализация .zip</a>
         <a class="btn" id="dlSr">DICOM SR .zip</a>
         <button id="dlReview" title="Решения специалиста по кадрам">Мои отметки .csv</button>
+        <button id="dlDelete" title="Стереть таблицу, снимки с разметкой и заключения этого задания с сервера">Удалить с сервера</button>
       </div>
+      <div class="dim small" id="retention"></div>
       <div class="wrap" id="tableWrap">
         <table>
           <thead><tr><th>Файл</th><th>Область</th><th>Вердикт</th><th>Нарушения</th><th title="Отметка специалиста">✓</th></tr></thead>
@@ -353,8 +355,20 @@ const S = {
 
 // ---------------------------------------------------------------------------
 // Сеть
-async function api(url, opts) {
+// Случайный идентификатор этого браузера: по нему сервер показывает в «недавних»
+// только свои задания. Это не пароль — просто чтобы чужие результаты не попадали
+// в список на общем сервере.
+const CLIENT = (() => {
+  try {
+    let id = localStorage.getItem('dxa-client');
+    if (!id) { id = (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36)); localStorage.setItem('dxa-client', id); }
+    return id;
+  } catch { return ''; }
+})();
+
+async function api(url, opts = {}) {
   let r;
+  opts = { ...opts, headers: { ...(opts.headers || {}), ...(CLIENT ? { 'X-DXA-Client': CLIENT } : {}) } };
   try { r = await fetch(url, opts); } catch (e) { throw new Error('Сервис недоступен: ' + e.message); }
   const text = await r.text();
   let data = null;
@@ -523,6 +537,7 @@ function upload(blob, name) {
     setStage('Загрузка на сервер', '0 %', 0, 1);
     const xhr = new XMLHttpRequest();
     xhr.open('POST', '/batch?fmt=xlsx&overlays=true&all_frames=true&sr=true');
+    if (CLIENT) xhr.setRequestHeader('X-DXA-Client', CLIENT);
     xhr.upload.onprogress = e => { if (e.lengthComputable) setStage('Загрузка на сервер', `${Math.round(e.loaded / e.total * 100)} %`, e.loaded, e.total); };
     xhr.onload = () => {
       let data = null; try { data = JSON.parse(xhr.responseText); } catch { }
@@ -577,6 +592,8 @@ async function openJob(id) {
   for (const [el, p] of [['#dlReport', 'report'], ['#dlDetails', 'details'], ['#dlOverlays', 'overlays'], ['#dlSr', 'sr']]) {
     $(el).href = `/jobs/${id}/${p}`; $(el).classList.remove('disabled');
   }
+  const ttl = S.cfg && S.cfg.job_ttl_hours;
+  $('#retention').textContent = ttl ? `Результаты хранятся на сервере ${fmt(ttl, ttl < 1 ? 1 : 0)} ч после обработки, затем удаляются автоматически. Исходные снимки удаляются сразу после анализа.` : '';
   $('#results').hidden = false;
   S.f.types.clear(); S.f.status = '';
   renderSummary(); applyFilters();
@@ -888,6 +905,14 @@ $('#comment').oninput = () => {
   const k = r.image_uid || r._i;
   S.reviews[k] = { ...(S.reviews[k] || { v: '' }), c: $('#comment').value, t: new Date().toISOString() };
   saveReviews();
+};
+$('#dlDelete').onclick = async () => {
+  if (!S.job || !confirm('Удалить результаты этого задания с сервера? Скачанные файлы останутся у вас.')) return;
+  try { await api(`/jobs/${S.job}`, { method: 'DELETE' }); }
+  catch (e) { toast('Не удалось удалить: ' + e.message, 'bad'); return; }
+  try { localStorage.removeItem('dxa-review:' + S.job); } catch { }
+  resetResults(); $('#run').hidden = true; $('#left').classList.remove('compact'); toast('Результаты удалены с сервера');
+  loadRecent();
 };
 $('#dlReview').onclick = () => {
   const head = ['path_to_study', 'file_name', 'study_uid', 'image_uid', 'anatomical_region', 'quality_class', 'violation_type', 'решение_специалиста', 'комментарий', 'время'];

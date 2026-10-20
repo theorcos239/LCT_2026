@@ -45,7 +45,22 @@ systemctl status dxa-qc-cert-renew.timer
 `deploy/bigdata10.nginx.conf`. После пересборки нового образа контейнер нужно
 создать заново с теми же переменными и томом. Порт 8000 наружу не открывать.
 
-Данные заданий остаются на сервере в рабочем каталоге контейнера и удаляются
-через 24 часа после завершения; при пересоздании контейнера они пропадут.
+Исходные снимки удаляются сразу после анализа. Результаты заданий (таблица,
+снимки с разметкой, SR) хранятся в контейнере 1 час (`DXA_QC_JOB_TTL_HOURS=1`),
+затем удаляются; кнопка «Удалить с сервера» стирает их сразу. В списке недавних
+заданий каждый браузер видит только свои (заголовок `X-DXA-Client`). При
+пересоздании контейнера все результаты пропадают.
+
+Текущий выпуск — `/opt/dxa-qc/releases/20261020b/`; прежний образ сохранён как
+`dxa-qc:keypoints-prev`. Контейнер запущен так:
+
+```bash
+sudo docker run -d --name dxa-qc --restart unless-stopped -p 127.0.0.1:8000:8000 \
+  -v /opt/dxa-qc/models/keypoints_crops:/app/runs/keypoints_crops:ro \
+  -e PYTHONPATH=/app/src -e DXA_QC_KEYPOINTS=1 -e DXA_QC_KEYPOINTS_VERDICT=0 \
+  -e DXA_QC_KEYPOINTS_MULTICROP=0 -e DXA_QC_ROI_RULE=margins \
+  -e DXA_QC_KEYPOINTS_DIR=/app/runs/keypoints_crops -e DXA_QC_JOB_TTL_HOURS=1 \
+  dxa-qc:keypoints
+```
 Отметки оператора хранятся в браузере. Доступ к стенду сейчас открыт всем — для клинического пилота нужны
 индивидуальные учётные записи и согласованный порядок хранения данных.

@@ -46,7 +46,7 @@ import numpy as np
 try:
     import zipfile
 
-    from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Query, UploadFile
+    from fastapi import Header, BackgroundTasks, FastAPI, File, HTTPException, Query, UploadFile
     from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
     from fastapi.staticfiles import StaticFiles
 except ImportError as e:                    # noqa: F841
@@ -114,6 +114,7 @@ class Job:
     summary: dict = field(default_factory=dict)
     error: str = ''
     workdir: Path | None = None
+    owner: str = ''                     # идентификатор браузера, загрузившего архив
 
     def public(self) -> dict:
         return {'id': self.id, 'state': self.state, 'progress': f'{self.done}/{self.total}',
@@ -130,13 +131,34 @@ JOB_TTL_HOURS = float(os.environ.get('DXA_QC_JOB_TTL_HOURS', '24'))
 
 
 def _cleanup_jobs(now: float | None = None) -> None:
-    """Удаляет завершённые задания старше JOB_TTL_HOURS вместе с их файлами."""
+    """Удаляет завершённые задания старше JOB_TTL_HOURS вместе с их файлами.
+
+    Каталоги, которых нет в JOBS, остались от прошлого запуска процесса: открыть
+    их уже нельзя, поэтому они удаляются по тому же сроку.
+    """
     now = time.time() if now is None else now
     for job_id, job in list(JOBS.items()):
         if job.finished is not None and now - job.finished > JOB_TTL_HOURS * 3600:
-            if job.workdir is not None:
-                shutil.rmtree(job.workdir, ignore_errors=True)
-            JOBS.pop(job_id, None)
+            _drop_job(job_id)
+    if JOBS_DIR.exists():
+        for d in JOBS_DIR.iterdir():
+            try:
+                if d.name not in JOBS and now - d.stat().st_mtime > JOB_TTL_HOURS * 3600:
+                    shutil.rmtree(d, ignore_errors=True)
+            except OSError:
+                pass
+
+
+def _drop_job(job_id: str) -> None:
+    job = JOBS.pop(job_id, None)
+    if job is not None and job.workdir is not None:
+        shutil.rmtree(job.workdir, ignore_errors=True)
+
+
+def _client_id(value: str | None) -> str:
+    """Заголовок X-DXA-Client: случайный идентификатор браузера, не секрет пользователя."""
+    v = (value or '').strip()
+    return v if 8 <= len(v) <= 64 and all(c.isalnum() or c == '-' for c in v) else ''
 
 
 def _run_job(job: Job, data_dir: Path, fmt: str, overlays: bool, sr: bool = False,
@@ -215,7 +237,8 @@ def version() -> dict:
             'keypoints': bool(kp and getattr(kp, 'available', False)),
             'cnn': {c: {'threshold': m.get('threshold'), 'stack': m.get('stack')}
                     for c, m in getattr(a.cnn, 'meta', {}).items()},
-            'region_classes': list(REGION_RU)}
+            'region_classes': list(REGION_RU),
+            'job_ttl_hours': JOB_TTL_HOURS}
 
 
 @app.get('/taxonomy')
@@ -326,10 +349,14 @@ async def batch(background: BackgroundTasks,
                 overlays: bool = Query(False, description='приложить zip с визуализацией'),
                 sr: bool = Query(False, description='приложить zip с DICOM SR'),
                 all_frames: bool = Query(False, description='оверлеи и для качественных кадров'),
-                wait: bool = Query(False, description='дождаться результата в этом же запросе')):
+                wait: bool = Query(False, description='дождаться результата в этом же запросе'),
+    x_dxa_client: str | None = Header(None, description='идентификатор клиента: '
+                                      'GET /jobs покажет задание только ему')):
     """Zip с исследованиями -> задание на пакетную обработку."""
     _cleanup_jobs()
-    job = Job(id=uuid.uuid4().hex[:12])
+    # Полный uuid: на открытом стенде номер задания — единственный ключ к
+    # чужим результатам, подобрать его перебором нельзя.
+    job = Job(id=uuid.uuid4().hex, owner=_client_id(x_dxa_client))
     job.workdir = JOBS_DIR / job.id
     job.workdir.mkdir(parents=True, exist_ok=True)
     data = job.workdir / 'data'
@@ -354,11 +381,27 @@ async def batch(background: BackgroundTasks,
 
 
 @app.get('/jobs')
-def jobs() -> dict:
-    return {'jobs': [j.public() for j in sorted(JOBS.values(), key=lambda j: -j.created)]}
+def jobs(x_dxa_client: str | None = Header(None)) -> dict:
+    """Задания этого клиента (заголовок X-DXA-Client). Чужие задания не
+    показываются: сервис может быть общим для нескольких пользователей."""
+    _cleanup_jobs()
+    owner = _client_id(x_dxa_client)
+    mine = [j for j in JOBS.values() if owner and j.owner == owner]
+    return {'jobs': [j.public() for j in sorted(mine, key=lambda j: -j.created)]}
+
+
+@app.delete('/jobs/{job_id}')
+def job_delete(job_id: str) -> dict:
+    """Удалить задание и все его файлы с сервера (таблица, оверлеи, SR)."""
+    job = _job(job_id)
+    if job.state in ('queued', 'running'):
+        raise HTTPException(409, 'задание ещё выполняется')
+    _drop_job(job_id)
+    return {'deleted': job_id}
 
 
 def _job(job_id: str) -> Job:
+    _cleanup_jobs()
     job = JOBS.get(job_id)
     if job is None:
         raise HTTPException(404, 'задание не найдено')

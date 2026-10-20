@@ -174,7 +174,8 @@ python -m uvicorn service.api:app --host 0.0.0.0 --port 8000</code></pre>
   <tr><td><code>POST /analyze</code></td><td>один снимок → вердикт JSON</td></tr>
   <tr><td><code>POST /analyze/overlay</code>, <code>/analyze/sr</code></td><td>один снимок → PNG с разметкой или DICOM SR</td></tr>
   <tr><td><code>POST /batch</code></td><td>zip с исследованиями → фоновое задание (код 202)</td></tr>
-  <tr><td><code>GET /jobs</code>, <code>/jobs/{id}</code></td><td>список заданий и состояние: <code>queued</code>, <code>running</code>, <code>done</code>, <code>failed</code></td></tr>
+  <tr><td><code>GET /jobs</code>, <code>/jobs/{id}</code></td><td>свои задания (по заголовку <code>X-DXA-Client</code>; чужие не показываются) и состояние: <code>queued</code>, <code>running</code>, <code>done</code>, <code>failed</code></td></tr>
+  <tr><td><code>DELETE /jobs/{id}</code></td><td>стереть задание и все его файлы с сервера</td></tr>
   <tr><td><code>GET /jobs/{id}/report | details | overlays | sr</code></td><td>таблица, измерения, снимки с разметкой, заключения</td></tr>
 </table>
 <pre><code>curl -F file=@снимок.dcm http://localhost:8000/analyze
