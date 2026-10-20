@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Контроль качества DXA — документация</title>
+<!-- Исходник docs/Документация.pdf. Сборка: sh docs/documentation/build_pdf.sh -->
+<style>
+  @page { size: A4; margin: 18mm 17mm 18mm 17mm;
+          @bottom-right { content: "стр. " counter(page); font: 8.5pt "Helvetica Neue", Arial, sans-serif; color: #777; }
+          @bottom-left { content: "Контроль качества DXA · документация · ЛЦТ 2026"; font: 8.5pt "Helvetica Neue", Arial, sans-serif; color: #777; } }
+  @page :first { @bottom-left { content: none; } @bottom-right { content: none; } }
+  :root { --ink: #1a1d21; --muted: #5b6470; --rule: #d5dae0; --head: #eef1f4; --accent: #1f5fa8; }
+  html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body { font: 10pt/1.42 "Helvetica Neue", Arial, sans-serif; color: var(--ink); background: #fff; margin: 0; }
+  h1 { font-size: 22pt; margin: 0 0 4mm; letter-spacing: -.2px; }
+  h2 { font-size: 14pt; margin: 0 0 3mm; padding-bottom: 1.5mm; border-bottom: 1.5px solid var(--accent); break-after: avoid; }
+  h3 { font-size: 11pt; margin: 4.5mm 0 1.5mm; break-after: avoid; }
+  p { margin: 0 0 2.2mm; }
+  ul, ol { margin: 0 0 2.5mm; padding-left: 5mm; }
+  li { margin-bottom: .8mm; }
+  section { margin-top: 8mm; }
+  .cover { break-after: page; }
+  h2, h3 { break-after: avoid; }
+  h2 + p, h3 + p, h3 + table, h2 + table { break-before: avoid; }
+  table { width: 100%; border-collapse: collapse; margin: 1.5mm 0 3mm; font-size: 9pt; break-inside: auto; }
+  tr { break-inside: avoid; }
+  th { background: var(--head); text-align: left; font-weight: 600; font-size: 8.3pt; text-transform: uppercase; letter-spacing: .2px; color: #333; }
+  th, td { border: 1px solid var(--rule); padding: 1.3mm 2mm; vertical-align: top; }
+  td.n, th.n { text-align: right; white-space: nowrap; }
+  code { font: 8.6pt Menlo, Consolas, monospace; background: #f3f5f7; padding: 0 .8mm; border-radius: 1mm; }
+  pre { font: 8.4pt/1.4 Menlo, Consolas, monospace; background: #f3f5f7; border: 1px solid var(--rule); border-radius: 1.5mm;
+        padding: 2mm 3mm; margin: 1.5mm 0 3mm; white-space: pre-wrap; break-inside: avoid; }
+  pre code { background: none; padding: 0; }
+  .note { border-left: 3px solid var(--accent); background: #f4f7fb; padding: 2mm 3mm; margin: 2mm 0 3mm; }
+  .muted { color: var(--muted); }
+  .cover { height: 250mm; display: flex; flex-direction: column; }
+  .cover .kicker { color: var(--accent); font-weight: 600; letter-spacing: 1px; font-size: 9pt; text-transform: uppercase; margin-top: 30mm; }
+  .cover .sub { font-size: 12pt; color: var(--muted); max-width: 150mm; margin-bottom: 10mm; }
+  .toc td:first-child { width: 8mm; color: var(--muted); }
+  .toc a { color: var(--ink); text-decoration: none; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="kicker">Контроль качества DXA · ЛЦТ 2026</div>
+  <h1>Документация</h1>
+  <p class="sub">Сервис автоматического контроля качества денситометрических исследований (DXA): назначение, установка, API, форматы данных, устройство моделей, эксплуатация и обучение.</p>
+  <p>Документ собран по разделу 5 технического задания: по нему сторонний разработчик запускает сервис и получает результат на новом наборе исследований без обращения к команде. Разделы идут в порядке ТЗ.</p>
+  <table class="toc">
+    <tr><td>1</td><td><a href="#s1">Назначение, возможности и ограничения</a></td></tr>
+    <tr><td>2</td><td><a href="#s2">Структура проекта</a></td></tr>
+    <tr><td>3</td><td><a href="#s3">Системные требования и зависимости</a></td></tr>
+    <tr><td>4</td><td><a href="#s4">Сборка и запуск контейнера</a></td></tr>
+    <tr><td>5</td><td><a href="#s5">Описание API</a></td></tr>
+    <tr><td>6</td><td><a href="#s6">Формат входных и выходных данных</a></td></tr>
+    <tr><td>7</td><td><a href="#s7">Модель, предобработка и постобработка</a></td></tr>
+    <tr><td>8</td><td><a href="#s8">Известные ошибки и способы их обработки</a></td></tr>
+    <tr><td>9</td><td><a href="#s9">Руководство пользователя</a></td></tr>
+    <tr><td>10</td><td><a href="#s10">Руководство по развёртыванию</a></td></tr>
+    <tr><td>11</td><td><a href="#s11">Обучение и дообучение моделей</a></td></tr>
+    <tr><td>12</td><td><a href="#s12">Состав поставки</a></td></tr>
+  </table>
+  <p class="muted" style="margin-top:auto">Версия 1.1.0 · 20 октября 2026 · Рентгеновских снимков в документе нет: медицинские изображения не публикуются (ТЗ, п. 3.2).</p>
+</div>
+
+<section id="s1">
+<h2>1. Назначение, возможности и ограничения</h2>
+<p>Если пациент на денситометре уложен неправильно, поле сканирования слишком короткое или в кадр попал посторонний предмет, измерение плотности кости недостоверно, и пациента вызывают повторно. Сервис проверяет снимки DXA поясничного отдела позвоночника и проксимального отдела бедра до того, как исследование уйдёт к врачу. Он сам определяет область снимка, проверяет пять критериев ТЗ и объясняет каждое замечание числом: «ось позвоночника отклонена на 6.6° при норме до 5°». Диагноз сервис не ставит и плотность кости не оценивает.</p>
+
+<h3>Возможности</h3>
+<ul>
+  <li>Определяет область: позвоночник, левое или правое бедро. Снимок, не похожий на DXA, получает область <code>unknown</code> и уходит на ручной разбор.</li>
+  <li>Ставит класс качества (0 — качественный, 1 — есть нарушение) и перечисляет все сработавшие нарушения.</li>
+  <li>Обрабатывает папку, zip-архив или выгрузку из PACS; повторы одного снимка сводит в одну строку.</li>
+  <li>Выдаёт таблицу в формате ТЗ (xlsx или csv), файл всех измерений, снимки с разметкой и заключение DICOM SR по каждому снимку.</li>
+  <li>Работает через контейнер (командная строка и HTTP API), веб-интерфейс и настольное приложение для Windows и macOS.</li>
+  <li>Работает локально: без интернета и без видеокарты. Исследование обрабатывается за 1.6 с (медиана), повторный запуск даёт тот же результат бит в бит.</li>
+</ul>
+
+<table>
+  <tr><th>Критерий</th><th>Что проверяется</th><th>Код</th></tr>
+  <tr><td>укладка позвоночника</td><td>внизу снимка видны гребни подвздошных костей; при включённой модели точек — что Th12 не обрезан</td><td><code>spine_position</code></td></tr>
+  <tr><td>ось позвоночника</td><td>наклон от вертикали не больше 5°</td><td><code>spine_axis</code></td></tr>
+  <tr><td>посторонние предметы</td><td>в кадре нет пряжек, пуговиц, наложений</td><td><code>spine_artifacts</code></td></tr>
+  <tr><td>ротация бедра</td><td>малый вертел виден, но выступает не слишком сильно</td><td><code>hip_rotation</code></td></tr>
+  <tr><td>отступы области интереса бедра</td><td>отступы по рисунку 6 ТЗ: 3 см сверху, 3 см снизу, 2 см сбоку</td><td><code>hip_roi</code></td></tr>
+</table>
+
+<h3>Ограничения</h3>
+<ul>
+  <li><b>Один аппарат.</b> Все обучающие снимки сделаны на GE Lunar Prodigy Advance. Масштаб задан константой (0.6 мм/пиксель), потому что поле <code>PixelSpacing</code> в файлах пусто. На другом аппарате масштаб перепроверяют, а модели дообучают (раздел 11).</li>
+  <li><b>Разметка оператора не проверяется:</b> в данных её нет ни на изображении, ни в служебных полях.</li>
+  <li><b>Ось и сколиоз.</b> При сколиозе эксперт нарушение оси не ставит. Сервис в таких случаях вердикт по оси не выносит и ставит пометку (раздел 9).</li>
+  <li><b>Верх укладки (Th12)</b> проверяется только с моделью ключевых точек. В контейнере и настольном приложении она выключена.</li>
+  <li><b>Мало примеров:</b> от 6 до 36 нарушений на критерий, поэтому доверительные интервалы метрик широкие.</li>
+  <li><b>Поддержка решения, а не медицинское изделие.</b> Окончательное решение о качестве принимает специалист.</li>
+</ul>
+</section>
+
+<section id="s2">
+<h2>2. Структура проекта</h2>
+<p>Проект — папка с кодом на Python 3.11. Веса рабочих моделей лежат в репозитории, поэтому после сборки образа интернет не нужен.</p>
+<table>
+  <tr><th>Путь</th><th>Назначение</th></tr>
+  <tr><td><code>build.sh</code>, <code>run.sh</code>, <code>Dockerfile</code></td><td>сборка образа и запуск контейнера</td></tr>
+  <tr><td><code>requirements.txt</code>, <code>requirements.lock</code></td><td>прямые зависимости и полный замороженный набор</td></tr>
+  <tr><td><code>service/</code></td><td>конвейер обработки, отчёт, DICOM SR, командная строка, API, веб-интерфейс, оценка качества, тесты</td></tr>
+  <tr><td><code>region_clf/</code></td><td>определение области снимка и фильтр «не DXA»</td></tr>
+  <tr><td><code>spine_qc/</code></td><td>позвоночник: укладка, ось, посторонние предметы</td></tr>
+  <tr><td><code>hip_roi/</code>, <code>hip_rotation/</code></td><td>бедро: отступы области интереса и ротация</td></tr>
+  <tr><td><code>cnn_qc/</code></td><td>нейросеть — второе мнение по ротации и посторонним предметам (ONNX)</td></tr>
+  <tr><td><code>src/dxa_qc/</code>, <code>configs/</code></td><td>модель ключевых точек (по умолчанию выключена, веса хранятся отдельно)</td></tr>
+  <tr><td><code>desktop/</code></td><td>настольное приложение и сборка установщиков для Windows и macOS</td></tr>
+  <tr><td><code>deploy/</code></td><td>конфигурация защищённого стенда: nginx с HTTPS и паролем</td></tr>
+  <tr><td><code>trainset.py</code>, <code>stats.py</code></td><td>обучающая выборка и метрики с доверительными интервалами</td></tr>
+  <tr><td><code>docs/</code>, <code>README.md</code>, <code>DATASET.md</code></td><td>документация, описание решения, разбор данных</td></tr>
+</table>
+<p>В репозиторий не входят снимки DXA, обучающий набор организаторов, разметка и разбиение выборки (ТЗ, п. 3.2), а также готовые установщики и веса модели ключевых точек.</p>
+
+<section class="cont" id="s3">
+<h2>3. Системные требования и зависимости</h2>
+<table>
+  <tr><th></th><th>Сервер с контейнером</th><th>Настольное приложение</th></tr>
+  <tr><td>система</td><td>Linux или другая ОС с Docker 20+ и оболочкой sh</td><td>Windows 10/11 (64 бита) или macOS 12+ (Apple Silicon)</td></tr>
+  <tr><td>процессор</td><td>2 ядра x86-64, рекомендуется 4</td><td>любой 64-разрядный, 2 ядра</td></tr>
+  <tr><td>память</td><td>2 ГБ, рекомендуется 4</td><td>4 ГБ</td></tr>
+  <tr><td>диск</td><td>2 ГБ (образ 1.4 ГБ)</td><td>1 ГБ</td></tr>
+  <tr><td>видеокарта</td><td>не нужна</td><td>не нужна</td></tr>
+  <tr><td>интернет</td><td>только при сборке образа</td><td>не нужен</td></tr>
+</table>
+<p><b>Скорость</b> (все 100 обучающих исследований, один поток, процессор): исследование — 1.6 с (медиана), максимум — 2.3 с при лимите ТЗ в 3 минуты; снимок — 0.44 с; весь набор (252 снимка) — 143 с. Замер: <code>python -m service.benchmark</code>.</p>
+<p><b>Зависимости.</b> Базовый образ <code>python:3.11-slim</code> закреплён контрольной суммой, версии всех 32 пакетов зафиксированы в <code>requirements.lock</code>. Основные: numpy 2.3.5, scipy 1.16.3, pandas 3.0.5, scikit-learn 1.9.0, pydicom 3.0.2, python-gdcm 3.2.6, pillow 12.0.0, openpyxl 3.1.5, onnxruntime 1.30.0, fastapi 0.141.1, uvicorn 0.54.0. Для обучения дополнительно нужен <code>requirements-train.txt</code> (torch 2.5.1, torchvision 0.20.1, onnx 1.23.0, pyyaml). В рабочий образ torch не входит: нейросети исполняет onnxruntime.</p>
+</section>
+</section>
+
+<section id="s4">
+<h2>4. Сборка и запуск контейнера</h2>
+<pre><code>git clone https://github.com/theorcos239/LCT_2026 &amp;&amp; cd LCT_2026
+./build.sh                              # образ dxa-qc:1.0.0, 1–3 минуты
+./run.sh batch /путь/к/исследованиям    # результат — в ./out
+./run.sh                                # веб-интерфейс и API: http://localhost:8000</code></pre>
+<p>После <code>./run.sh batch</code> в папке <code>out</code> появятся <code>report.xlsx</code>, <code>details.json</code>, <code>overlays.zip</code> и <code>sr.zip</code> (раздел 6). Папка с исследованиями подключается только на чтение. <code>build.sh</code> сначала проверяет, что на месте все файлы моделей, и без них образ не собирает: иначе сервис молча потерял бы часть критериев.</p>
+<table>
+  <tr><th>Переменная</th><th>По умолчанию</th><th>Смысл</th></tr>
+  <tr><td><code>PORT</code></td><td>8000</td><td>порт сервиса</td></tr>
+  <tr><td><code>OUT</code></td><td>./out</td><td>папка результатов</td></tr>
+  <tr><td><code>FMT</code></td><td>xlsx</td><td>формат таблицы: xlsx или csv</td></tr>
+  <tr><td><code>ROI_RULE</code></td><td>margins</td><td>отступы бедра: <code>margins</code> — по рисунку 6 ТЗ; <code>scan_length</code> — прежнее правило длины поля (12.9 см)</td></tr>
+</table>
+<h3>Без скриптов и без Docker</h3>
+<pre><code>docker run --rm -p 8000:8000 dxa-qc:1.0.0
+docker run --rm --user "$(id -u):$(id -g)" -v /данные:/data:ro -v "$PWD/out":/out dxa-qc:1.0.0 \
+    python -m service.cli /data --out /out/report.xlsx --details /out/details.json \
+    --overlays /out/overlays.zip --sr /out/sr.zip
+
+pip install -r requirements.lock                      # Python 3.11, результат тот же
+python -m service.cli /путь/к/исследованиям --out report.xlsx
+python -m uvicorn service.api:app --host 0.0.0.0 --port 8000</code></pre>
+<p>Параметры командной строки: <code>--details</code>, <code>--overlays</code>, <code>--sr</code> — дополнительные файлы; <code>--roi-rule</code> — правило отступов; <code>--no-cnn</code> — без нейросети; <code>--json</code>, <code>--quiet</code> — сводка в JSON, без вывода хода работы.</p>
+<p><b>Проверка:</b> <code>curl -s localhost:8000/health</code> → у <code>region_clf</code>, <code>spine_appearance</code>, <code>cnn_rotation</code>, <code>cnn_artifacts</code> должно быть <code>true</code> (<code>keypoints: false</code> — норма для рабочего образа).</p>
+<div class="note"><b>Воспроизводимость.</b> Все вычисления идут в один поток (<code>OMP_NUM_THREADS=1</code> задан в образе): при многопоточности порядок сложения меняется, и последние знаки результата «плавают». Для скорости большой набор делят на части и запускают несколько процессов.</div>
+</section>
+
+<section id="s5">
+<h2>5. Описание API</h2>
+<p>После <code>./run.sh</code> API доступен по адресу <code>http://localhost:8000</code>. Ответы — JSON, файлы передаются в поле <code>file</code> (multipart/form-data). Интерактивное описание — <code>/docs</code> (отдаётся из локальной копии Swagger UI, без интернета), схема — <code>/openapi.json</code>.</p>
+<table>
+  <tr><th>Запрос</th><th>Что делает</th></tr>
+  <tr><td><code>GET /health</code></td><td>работает ли сервис, какие модели загружены</td></tr>
+  <tr><td><code>GET /version</code></td><td>версия, пороги, правило отступов, состояние модели точек</td></tr>
+  <tr><td><code>GET /taxonomy</code></td><td>коды нарушений и областей</td></tr>
+  <tr><td><code>POST /analyze</code></td><td>один снимок → вердикт JSON</td></tr>
+  <tr><td><code>POST /analyze/overlay</code>, <code>/analyze/sr</code></td><td>один снимок → PNG с разметкой или DICOM SR</td></tr>
+  <tr><td><code>POST /batch</code></td><td>zip с исследованиями → фоновое задание (код 202)</td></tr>
+  <tr><td><code>GET /jobs</code>, <code>/jobs/{id}</code></td><td>список заданий и состояние: <code>queued</code>, <code>running</code>, <code>done</code>, <code>failed</code></td></tr>
+  <tr><td><code>GET /jobs/{id}/report | details | overlays | sr</code></td><td>таблица, измерения, снимки с разметкой, заключения</td></tr>
+</table>
+<pre><code>curl -F file=@снимок.dcm http://localhost:8000/analyze
+curl -F file=@исследования.zip 'http://localhost:8000/batch?fmt=xlsx&amp;overlays=true&amp;sr=true'
+curl http://localhost:8000/jobs/&lt;id&gt;            # ждать state = done
+curl -OJ http://localhost:8000/jobs/&lt;id&gt;/report</code></pre>
+<p>Параметры <code>/batch</code>: <code>fmt</code> (xlsx|csv), <code>overlays</code>, <code>sr</code>, <code>all_frames</code> (разметка и для качественных снимков), <code>wait</code> (ждать результат в том же запросе — для небольших архивов).</p>
+<p>Фрагмент ответа <code>/analyze</code> для снимка позвоночника с наклонённой осью:</p>
+<pre><code>{"anatomical_region": "spine", "quality_class": 1, "violation_type": "spine_axis",
+ "violation_description": ["поясничный отдел: ось отклонена более чем на 5°"],
+ "quality_probability": 0.3895, "flags": [], "scoliosis": "",
+ "details": {"spine": {"axis": {"angle_deg": -6.58, "violated": true,
+            "text": "ось позвоночника отклонена на 6.6° (допустимо 5°)"}, ...}},
+ "processing_status": "Success", "time_of_processing": 1.2791}</code></pre>
+<table>
+  <tr><th>Код</th><th>Когда</th></tr>
+  <tr><td>200</td><td>выполнено; для <code>/analyze</code> — и когда снимок прочитан, но не проанализирован (<code>processing_status = Failure</code>)</td></tr>
+  <tr><td>202 / 409</td><td>задание принято / результат запрошен до завершения задания</td></tr>
+  <tr><td>400 / 404 / 503</td><td>файл не DICOM или архив не распаковывается / задание не найдено / модели не загружены</td></tr>
+</table>
+<p>Настройки (нейросеть, правило отступов, срок хранения) задаются переменными окружения при запуске, а не в запросе: иначе отчёты с разными настройками нельзя было бы сравнивать. Пароля у API нет — сервис рассчитан на закрытый контур (раздел 10).</p>
+</section>
+
+<section id="s6">
+<h2>6. Формат входных и выходных данных</h2>
+<h3>Вход</h3>
+<p>Исследования DICOM в том виде, в каком их выгружает денситометр: папка исследований (файлы на любой глубине), одно исследование, один файл <code>.dcm</code> или zip с любым из этого. DICOMDIR, отчёты без изображения и служебные файлы ОС пропускаются. Читаются несжатые и сжатые файлы (RLE, JPEG Baseline, JPEG Lossless, JPEG-LS, JPEG 2000). MONOCHROME1 переворачивается, VOI LUT применяется, ориентация приводится по <code>PatientOrientation</code>, зеркальная выгрузка отражается. Повторы находятся по пикселям: в обучающем наборе 499 файлов дают 252 уникальных снимка. Персональные данные не используются.</p>
+
+<h3>Выход</h3>
+<table>
+  <tr><th>Файл</th><th>Что внутри</th></tr>
+  <tr><td><code>report.xlsx</code> / <code>.csv</code></td><td>одна строка — один уникальный снимок (ТЗ, п. 2.5); csv — UTF-8 без BOM, лист xlsx — <code>quality</code></td></tr>
+  <tr><td><code>details.json</code></td><td>все измерения: углы, миллиметры, вероятности, пометки</td></tr>
+  <tr><td><code>overlays.zip</code></td><td>PNG с ориентирами, порогами нормы и тепловой картой нейросети (ТЗ, п. 2.6)</td></tr>
+  <tr><td><code>sr.zip</code></td><td>заключения Basic Text SR по каждому снимку, со ссылкой на исходный снимок; <code>VerificationFlag = UNVERIFIED</code></td></tr>
+</table>
+<p>Первые восемь колонок таблицы — ровно колонки ТЗ в том же порядке:</p>
+<table>
+  <tr><th>Колонка</th><th>Значение</th></tr>
+  <tr><td><code>path_to_study</code>, <code>study_uid</code>, <code>image_uid</code></td><td>путь к исследованию и идентификаторы из DICOM</td></tr>
+  <tr><td><code>anatomical_region</code></td><td><code>spine</code>, <code>lh</code>, <code>rh</code> или <code>unknown</code></td></tr>
+  <tr><td><code>quality_class</code></td><td>0 — качественное, 1 — есть нарушение</td></tr>
+  <tr><td><code>violation_type</code></td><td>коды через «;», у качественного снимка пусто</td></tr>
+  <tr><td><code>processing_status</code>, <code>time_of_processing</code></td><td>Success / Failure и время обработки, с</td></tr>
+</table>
+<p>Дополнительные колонки правее: <code>projection</code>, <code>violation_description</code>, <code>quality_probability</code> (вероятность нарушения, по ней считается ROC-AUC), <code>scoliosis</code> (yes/no, только при включённой модели точек), <code>p_&lt;критерий&gt;</code>, <code>region_confidence</code>, <code>region_accepted</code>, <code>file_name</code>, <code>duplicates</code>, <code>flags</code>, <code>error</code>.</p>
+<table>
+  <tr><th>Код нарушения</th><th>Значение</th></tr>
+  <tr><td><code>spine_position</code></td><td>поясничный отдел: некорректная укладка</td></tr>
+  <tr><td><code>spine_axis</code></td><td>поясничный отдел: ось отклонена более чем на 5°</td></tr>
+  <tr><td><code>spine_artifacts</code></td><td>поясничный отдел: посторонние предметы или артефакты</td></tr>
+  <tr><td><code>hip_rotation</code></td><td>бедро: некорректная ротация</td></tr>
+  <tr><td><code>hip_roi</code></td><td>бедро: недостаточные отступы области интереса</td></tr>
+  <tr><td><code>undetermined</code></td><td>анатомическая область не определена</td></tr>
+</table>
+</section>
+
+<section id="s7">
+<h2>7. Модель, предобработка и постобработка</h2>
+<ol>
+  <li><b>Чтение:</b> поиск исследований, чтение DICOM, удаление повторов.</li>
+  <li><b>Область:</b> позвоночник, левое или правое бедро; снимки, не похожие на DXA, — на ручной разбор.</li>
+  <li><b>Критерии:</b> измерения в миллиметрах и градусах по контуру кости.</li>
+  <li><b>Второе мнение:</b> для ротации и посторонних предметов к измерению добавляется нейросеть.</li>
+  <li><b>Вердикт и отчёт:</b> сравнение с порогами, вероятности, таблица, разметка, DICOM SR.</li>
+</ol>
+<p>Основа решения — измерения, а не нейросеть «от снимка к вердикту»: нарушений от 6 до 36 на критерий, и большую сеть на этом не обучить. Кроме того, измерение («ось 6.6°») специалист проверяет глазами за секунду.</p>
+
+<h3>Предобработка</h3>
+<p>Яркость и ориентация приводятся к стандарту (раздел 6). Масштаб — 0.600 мм/пиксель для позвоночника и 0.607 мм для бедра. Для нейросети яркость нормализуется по перцентилям 0.5–99.5 (снимки на 12 и 16 бит её не ломают), правое бедро отражается в левое, длинная сторона приводится к 320 пикселям.</p>
+
+<h3>Модели и критерии</h3>
+<table>
+  <tr><th>Модуль</th><th>Как устроен</th><th>Когда нарушение</th></tr>
+  <tr><td><code>region_clf</code></td><td>логистическая регрессия по снимку 32×32 и направлениям перепадов яркости; три проверки отсеивают чужие, перевёрнутые и малоконтрастные снимки</td><td>—</td></tr>
+  <tr><td>укладка</td><td>доля кости в нижних боковых зонах, где должны быть гребни подвздошных костей; вторая оценка — модель «вида снимка»</td><td>гребни не попали в кадр</td></tr>
+  <tr><td>ось</td><td>прямая Тейла–Сена через центры тел позвонков; контроль — прямая по краям колонны</td><td>угол больше порога и обе оценки согласны (≤ 2°)</td></tr>
+  <tr><td>посторонние предметы</td><td>тонкие яркие структуры (длина, вытянутость, контраст) + нейросеть</td><td>объединённая вероятность выше порога</td></tr>
+  <tr><td>ротация бедра</td><td>площадь выступа малого вертела (норма 96–272 мм²) + нейросеть</td><td>объединённая вероятность выше порога</td></tr>
+  <tr><td>отступы ROI бедра</td><td>верхушка большого вертела, наружный контур бедра, седалищная кость</td><td>отступ меньше 3 см сверху, 3 см снизу или 2 см сбоку</td></tr>
+  <tr><td><code>cnn_qc</code></td><td>ResNet-34, три копии с разными стартами обучения, ответы усредняются; ONNX, процессор</td><td>—</td></tr>
+</table>
+
+<h3>Постобработка</h3>
+<ul>
+  <li><b>Объединённая оценка</b> для ротации и предметов: <code>p = σ(a·logit(p_нейросети) + b·измерение + c)</code>; подбираются только три коэффициента и порог.</li>
+  <li><b>Вероятности:</b> по каждому критерию; общая <code>quality_probability = 1 − Π(1 − pᵢ)</code>.</li>
+  <li><b>Класс:</b> <code>quality_class = 1</code>, если сработал хотя бы один критерий.</li>
+  <li><b>Пометки</b> «проверьте глазами», если две независимые оценки расходятся (раздел 9).</li>
+  <li>Если нейросеть не загрузилась, критерий считается по измерению с пометкой <code>cnn:unavailable</code>.</li>
+</ul>
+
+<h3>Модель ключевых точек (дополнительно)</h3>
+<p>U-Net с энкодером ResNet-34 находит 29 анатомических точек; обучена на 242 размеченных снимках и 359 подтверждённых врачом фрагментах. В рабочем образе и настольном приложении выключена: нужны PyTorch и отдельные веса. Включается переменной <code>DXA_QC_KEYPOINTS=1</code>. Сейчас она добавляет проверку покрытия Th12 (менее 5% тела — нарушение укладки, 5–50% — пометка для проверки человеком) и справочную оценку сколиоза по L1–L4. Вердикт по оси она не заменяет: на обучающем наборе выигрыша перед контуром нет (подробно — <code>docs/KEYPOINTS.md</code>).</p>
+</section>
+
+<section id="s7m" class="cont">
+<h3>Качество на обучающем наборе</h3>
+<p>Оценка out-of-fold: 100 исследований разбиты на пять частей, каждый снимок проверен моделью, обученной на остальных четырёх; снимки одного пациента — в одной части. В скобках — 95% доверительный интервал. <b>Числа относятся к конфигурации до 20.10.2026</b>, когда отступы бедра оценивались по длине поля; после перехода на рисунок 6 ТЗ и исправления эталона полный сопоставимый прогон ещё не выполнен.</p>
+<table>
+  <tr><th>Критерий</th><th class="n">Нарушений / снимков</th><th class="n">Чувствительность</th><th class="n">Специфичность</th><th class="n">F1</th><th class="n">ROC-AUC</th></tr>
+  <tr><td>укладка позвоночника</td><td class="n">6 / 99</td><td class="n">0.67</td><td class="n">0.84</td><td class="n">0.32</td><td class="n">0.82 [0.58–0.95]</td></tr>
+  <tr><td>ось позвоночника</td><td class="n">10 / 99</td><td class="n">0.30</td><td class="n">0.94</td><td class="n">0.33</td><td class="n">0.82 [0.72–0.92]</td></tr>
+  <tr><td>посторонние предметы</td><td class="n">17 / 99</td><td class="n">0.65</td><td class="n">0.93</td><td class="n">0.65</td><td class="n">0.85 [0.72–0.96]</td></tr>
+  <tr><td>ротация бедра</td><td class="n">36 / 150</td><td class="n">0.67</td><td class="n">0.76</td><td class="n">0.55</td><td class="n">0.82 [0.72–0.90]</td></tr>
+  <tr><td>отступы ROI бедра</td><td class="n">7 / 150</td><td class="n">0.71</td><td class="n">0.99</td><td class="n">0.71</td><td class="n">0.94 [0.82–1.00]</td></tr>
+  <tr><td><b>всего: «есть нарушение»</b></td><td class="n">72 / 249</td><td class="n">0.67</td><td class="n">0.75</td><td class="n"><b>0.59</b></td><td class="n"><b>0.78</b> [0.72–0.85]</td></tr>
+</table>
+<p>Область снимка определена верно на 252 из 252; прочитаны все 499 файлов. Метрики п. 8.4 ТЗ с интервалами — <code>service/metrics.json</code>, пересчёт — <code>python -m service.evaluate</code>.</p>
+</section>
+
+<section id="s8">
+<h2>8. Известные ошибки и способы их обработки</h2>
+<p>Необработанные ошибки наружу не выходят (ТЗ, п. 2.7): любая ошибка становится строкой со статусом <code>Failure</code> и текстом в колонке <code>error</code>, обработка остальных снимков продолжается. Такая строка получает <code>quality_class = 1</code>.</p>
+<table>
+  <tr><th>Ситуация</th><th>Что делает сервис</th></tr>
+  <tr><td>файл повреждён или не DICOM; пустая папка</td><td>строка <code>Failure</code> с текстом ошибки</td></tr>
+  <tr><td>DICOMDIR, отчёты, служебные файлы</td><td>пропускаются, строк не дают</td></tr>
+  <tr><td>снимок не похож на DXA или перевёрнут</td><td>область <code>unknown</code>, код <code>undetermined</code>, ручной разбор</td></tr>
+  <tr><td>зеркальная выгрузка</td><td>отражается к стандарту; пометка <code>orientation:mirrored_lr</code></td></tr>
+  <tr><td>сколиоз, оценки угла оси расходятся</td><td>вердикт по оси не ставится; пометка <code>axis:curved_suppressed</code></td></tr>
+  <tr><td>седалищная кость не найдена</td><td>нижний отступ по типичной анатомии; пометка <code>I:anatomical_prior</code></td></tr>
+  <tr><td>две оценки критерия расходятся</td><td>пометка <code>*:estimates_disagree</code> или <code>*:cnn_vs_geometry_disagree</code></td></tr>
+  <tr><td>нейросеть не загрузилась</td><td>критерий по измерению; пометка <code>cnn:unavailable(...)</code></td></tr>
+  <tr><td>эндопротез, нетипичный размер, шум, 12/16 бит</td><td>обрабатывается без сбоя</td></tr>
+  <tr><td>путь в zip ведёт за пределы папки</td><td>архив отклоняется</td></tr>
+</table>
+<h3>Ошибки при запуске</h3>
+<table>
+  <tr><th>Что видно</th><th>Что делать</th></tr>
+  <tr><td><code>docker</code> не найден; образ <code>dxa-qc:1.0.0</code> не найден</td><td>установить Docker; выполнить <code>./build.sh</code></td></tr>
+  <tr><td>«не найден файл модели», в <code>/health</code> нейросети <code>false</code></td><td>пересобрать образ из полного репозитория или обучить модель (раздел 11)</td></tr>
+  <tr><td>порт 8000 занят</td><td><code>PORT=9000 ./run.sh</code></td></tr>
+  <tr><td>код 409 / 404 на запрос задания</td><td>дождаться <code>done</code> / задание удалено после перезапуска или через 24 часа — отправить снова</td></tr>
+  <tr><td>macOS: «не удаётся проверить разработчика»</td><td>щелчок правой кнопкой по приложению → «Открыть» (раздел 9)</td></tr>
+</table>
+</section>
+
+<section id="s9">
+<h2>9. Руководство пользователя</h2>
+<p>Для лаборанта или врача, который загружает исследования и разбирает результат. Пошаговая инструкция со снимками экрана — <code>Инструкция_приложение.pdf</code>.</p>
+<table>
+  <tr><th>Способ</th><th>Когда удобен</th><th>Как открыть</th></tr>
+  <tr><td>веб-интерфейс</td><td>сервис запущен на сервере клиники</td><td>адрес сервиса в браузере, например <code>http://localhost:8000/</code></td></tr>
+  <tr><td>приложение Windows / macOS</td><td>компьютер без Docker, всё локально</td><td>ярлык «Контроль качества DXA»</td></tr>
+  <tr><td>командная строка</td><td>большая папка без окна</td><td><code>./run.sh batch</code> или <code>dxa-qc-cli batch</code></td></tr>
+</table>
+
+<h3>Установка приложения</h3>
+<ul>
+  <li><b>Windows:</b> запустите <code>DXA-QC-Setup-1.0.0.exe</code> (права администратора не нужны). Если появится «Система Windows защитила ваш компьютер» — «Подробнее» → «Выполнить в любом случае»: установщик не подписан.</li>
+  <li><b>macOS:</b> откройте <code>DXA-QC-1.1.0-macos-arm64.dmg</code> и перетащите «DXA-QC» в «Программы». При первом запуске щёлкните приложение правой кнопкой → «Открыть» → «Открыть»: приложение не заверено Apple.</li>
+</ul>
+<p>Первый запуск занимает до минуты. Интернет не нужен; новая версия ставится поверх старой, отметки специалиста сохраняются.</p>
+
+<h3>Проверка исследований</h3>
+<ol>
+  <li>Перетащите в окно папку, zip-архив или файлы DICOM (или «Выбрать папку» / «Выбрать файлы»). Выгрузку из PACS подавайте как есть.</li>
+  <li>Через пару секунд на исследование появится сводка и таблица; первым выбирается снимок с замечанием. Плитки сводки и метки нарушений работают как фильтры.</li>
+  <li>Справа — снимок с разметкой, вердикт и каждый критерий: что измерено и с какой нормой сравнивалось. Щелчок по снимку открывает его на весь экран.</li>
+  <li>Отметьте «согласен» или «не согласен» и при желании добавьте комментарий.</li>
+</ol>
+<p>Клавиши: <code>J</code>/<code>K</code> или стрелки — следующий/предыдущий снимок, <code>N</code> — следующий с нарушением, <code>A</code>/<code>D</code> — согласен/не согласен, <code>C</code> — комментарий, <code>F</code> — на весь экран, <code>/</code> — поиск, <code>?</code> — справка. Работают и в русской раскладке.</p>
+<p>Скачать можно таблицу (.xlsx), измерения (.json), визуализацию (.zip), DICOM SR (.zip) и свои отметки (.csv). Результаты обработки хранятся 24 часа.</p>
+
+<h3>Как читать результат</h3>
+<p>Класс 0 — снимок качественный, 1 — есть хотя бы одно нарушение; перечислены все. Пометка в колонке <code>flags</code> — не нарушение, а знак «измерение здесь менее надёжно, посмотрите сами»:</p>
+<table>
+  <tr><th>Пометка</th><th>Что значит</th></tr>
+  <tr><td><code>*:estimates_disagree</code></td><td>два независимых способа измерения дали разный ответ</td></tr>
+  <tr><td><code>*:cnn_vs_geometry_disagree</code></td><td>нейросеть и измерение не согласны; вердикт по объединённой оценке</td></tr>
+  <tr><td><code>axis:curved_suppressed</code></td><td>позвоночник изогнут (сколиоз): угол отражает форму, а не укладку, вердикт по оси не ставится</td></tr>
+  <tr><td><code>scoliosis:present</code></td><td>справочно: по точкам L1–L4 есть выраженная дуга (только с моделью точек)</td></tr>
+  <tr><td><code>position:th12_*</code></td><td>верх укладки по Th12 нужно проверить глазами (только с моделью точек)</td></tr>
+  <tr><td><code>orientation:mirrored_lr</code></td><td>снимок выгружен зеркально и приведён к стандарту</td></tr>
+  <tr><td><code>I:anatomical_prior</code></td><td>седалищная кость не найдена, нижний отступ оценён по типичной анатомии</td></tr>
+  <tr><td><code>cnn:unavailable(...)</code></td><td>нейросеть не загрузилась, оценка только по измерению</td></tr>
+</table>
+<p>Пакетная обработка без окна: <code>dxa-qc-cli batch D:\исследования --out report.xlsx --overlays снимки.zip --sr sr.zip</code>. В приложении для macOS утилита лежит внутри пакета: <code>/Applications/DXA-QC.app/Contents/MacOS/dxa-qc-cli</code>.</p>
+</section>
+
+<section id="s10">
+<h2>10. Руководство по развёртыванию</h2>
+<p>Для инженера, который ставит сервис на сервер клиники или проверочный стенд.</p>
+<pre><code>docker save dxa-qc:1.0.0 | gzip &gt; dxa-qc-1.0.0.tar.gz   # на машине с интернетом
+docker load &lt; dxa-qc-1.0.0.tar.gz                        # на сервере без интернета
+docker run -d --name dxa-qc -p 127.0.0.1:8000:8000 --restart unless-stopped dxa-qc:1.0.0
+docker ps                                               # STATUS: healthy
+docker logs dxa-qc</code></pre>
+<p>Встроенная проверка раз в 30 секунд запрашивает <code>/health</code>; <code>--restart unless-stopped</code> поднимает сервис после сбоя и перезагрузки.</p>
+<table>
+  <tr><th>Переменная</th><th>По умолчанию</th><th>Смысл</th></tr>
+  <tr><td><code>DXA_QC_ROI_RULE</code></td><td>margins</td><td>правило отступов бедра: <code>margins</code> или <code>scan_length</code></td></tr>
+  <tr><td><code>DXA_QC_CNN</code></td><td>включено</td><td><code>0</code> — без нейросети</td></tr>
+  <tr><td><code>DXA_QC_KEYPOINTS</code></td><td>выключено</td><td><code>1</code> — модель точек (образ <code>Dockerfile.keypoints</code>, веса монтируются снаружи)</td></tr>
+  <tr><td><code>DXA_QC_JOB_TTL_HOURS</code></td><td>24</td><td>срок хранения результатов заданий</td></tr>
+  <tr><td><code>OMP_NUM_THREADS</code></td><td>1</td><td>условие воспроизводимости; не менять</td></tr>
+</table>
+<h3>Безопасность</h3>
+<ul>
+  <li>Исходные снимки не изменяются: папка подключается только на чтение. Ни один запрос не уходит в интернет; телеметрии и проверки обновлений нет.</li>
+  <li>Процесс в контейнере работает не от root; zip-архивы проверяются на выход путей за пределы папки.</li>
+  <li>У API нет пароля. Для доступа из сети перед сервисом ставят обратный прокси с HTTPS и паролем; готовая конфигурация nginx — <code>deploy/bigdata10.nginx.conf</code>, пример стенда — <code>docs/BIGDATA10.md</code> (контейнер слушает только 127.0.0.1, наружу — nginx с HTTPS и паролем).</li>
+</ul>
+<h3>Эксплуатация</h3>
+<ul>
+  <li>Задания хранятся в памяти процесса и временной папке; перезапуск контейнера их стирает. Очень большой набор надёжнее обрабатывать <code>./run.sh batch</code>.</li>
+  <li>Нагрузка масштабируется несколькими контейнерами или процессами; внутри процесса один поток — намеренно.</li>
+  <li>Для пилота сервис ставят за DICOM-роутером: он получает копии исследований, а заключения SR возвращаются в PACS рядом со снимком.</li>
+  <li>Веб-сервер для локальной сети без Docker — <code>dxa-qc-cli serve</code> (порт 8000); только в доверенной сети.</li>
+</ul>
+<h3>Проверка и обновление</h3>
+<pre><code>curl -s localhost:8000/health ; curl -s localhost:8000/version
+python -m service.test_service      # формат, устойчивость, API, повторяемость
+docker rm -f dxa-qc &amp;&amp; docker rmi dxa-qc:1.0.0   # удаление</code></pre>
+<p>Обновление — собрать или загрузить новый образ и пересоздать контейнер с теми же переменными. Приложение для Windows удаляется через «Параметры → Приложения», для macOS — перемещением в Корзину; перед этим выгрузите отметки специалиста.</p>
+</section>
+
+<section id="s11">
+<h2>11. Обучение и дообучение моделей</h2>
+<p>Для разработчика, который переобучает модели или переносит сервис на другой аппарат. Обучающий набор в репозиторий не входит: папку <code>НД_для_обучения/</code> (снимки и <code>разметка.xlsx</code>) кладут в корень проекта, рядом — <code>region_clf/labels.csv</code> (область каждого снимка) и <code>folds.csv</code> (разбиение на пять частей; снимки одного исследования всегда в одной части).</p>
+<pre><code>pip install -r requirements.txt
+python -m region_clf.make_labels       # 1. эталон области
+python -m region_clf.train --stress    # 2. модель области
+python -m spine_qc.calibrate --sweep   # 3. пороги позвоночника
+python -m hip_rotation.calibrate       # 4. нормы ротации
+python -m hip_roi.evaluate &amp;&amp; python -m hip_roi.probability   # 5. отступы ROI
+pip install -r requirements-train.txt
+python -m cnn_qc.train --criterion rotation    # 6. нейросети
+python -m cnn_qc.train --criterion artifacts
+python -m service.evaluate             # 7. метрики сервиса с интервалами</code></pre>
+<p>Шаги 2–5 независимы; шаг 6 строит объединённую оценку поверх измерений шагов 3–4. Калибровка измерений — около минуты на ноутбуке, нейросеть — около 6 минут на критерий на видеокарте. <code>--calibrate-only</code> пересчитывает только коэффициенты объединённой оценки. Каждый скрипт печатает out-of-fold метрики — ориентироваться нужно на них. Нормы отступов (3, 3, 2 см) взяты из ТЗ и не подбираются.</p>
+<table>
+  <tr><th>Модуль</th><th>Файлы результата</th></tr>
+  <tr><td><code>region_clf</code></td><td><code>region_clf/model.joblib</code></td></tr>
+  <tr><td><code>spine_qc</code></td><td><code>spine_qc/thresholds.json</code>, <code>model.joblib</code></td></tr>
+  <tr><td><code>hip_rotation</code>, <code>hip_roi</code></td><td><code>hip_rotation/thresholds.json</code>, <code>hip_roi/probability.json</code></td></tr>
+  <tr><td><code>cnn_qc</code></td><td><code>cnn_qc/&lt;критерий&gt;/model_0..2.onnx</code>, <code>meta.json</code></td></tr>
+</table>
+<h3>Дообучение и перенос</h3>
+<ol>
+  <li>Добавьте исследования в <code>НД_для_обучения</code> и строки в <code>разметка.xlsx</code>; допишите их в <code>folds.csv</code>, не меняя части старых.</li>
+  <li>Выполните шаги 1–7 и сравните метрики с прежними: разница в пределах доверительного интервала — случайность.</li>
+  <li>Для другого аппарата сначала проверьте масштаб (позвонок с диском — 27–36 мм; константы в <code>spine_qc/geometry.py</code>, <code>hip_roi/geometry.py</code>) и долю снимков с <code>undetermined</code>.</li>
+</ol>
+<p><b>Модель ключевых точек</b> обучается отдельно (нужны torch и видеокарта или Apple MPS): <code>PYTHONPATH=src python -m dxa_qc.train --config configs/keypoints_crops.yaml</code>. Подробно — <code>docs/TRAINING.md</code> и <code>docs/KEYPOINTS.md</code>.</p>
+</section>
+
+<section id="s12" class="cont">
+<h2>12. Состав поставки</h2>
+<table>
+  <tr><th>Что</th><th>Где</th></tr>
+  <tr><td>исходный код и веса рабочих моделей</td><td>папка проекта; <code>github.com/theorcos239/LCT_2026</code></td></tr>
+  <tr><td>установщик Windows</td><td><code>DXA-QC-Setup-1.0.0.exe</code> в папке «установщик» рядом с папкой проекта</td></tr>
+  <tr><td>приложение macOS (Apple Silicon)</td><td><code>DXA-QC-1.1.0-macos-arm64.dmg</code> в той же папке</td></tr>
+  <tr><td>эта документация</td><td><code>docs/Документация.pdf</code>; исходник — <code>docs/documentation/</code></td></tr>
+  <tr><td>пояснительная записка, инструкция пользователя</td><td><code>docs/Пояснительная_записка.pdf</code>, <code>docs/Инструкция_приложение.pdf</code></td></tr>
+  <tr><td>руководства в Markdown</td><td><code>docs/USER_GUIDE.md</code>, <code>DEPLOYMENT.md</code>, <code>TRAINING.md</code>, <code>DESKTOP.md</code>, <code>REVIEW.md</code></td></tr>
+  <tr><td>презентация без снимков</td><td><code>docs/pitch/</code></td></tr>
+</table>
+<p>Установщики, презентация со снимками и веса модели точек в GitHub не входят и передаются вместе с папкой проекта.</p>
+</section>
+
+</body>
+</html>

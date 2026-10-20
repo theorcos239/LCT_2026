@@ -37,6 +37,8 @@ def data_dir() -> Path:
     if os.name == 'nt':
         base = Path(os.environ.get('LOCALAPPDATA') or Path.home() / 'AppData' / 'Local')
         d = base / 'DXA-QC'
+    elif sys.platform == 'darwin':
+        d = Path.home() / 'Library' / 'Application Support' / 'DXA-QC'
     else:
         d = Path(os.environ.get('XDG_DATA_HOME') or Path.home() / '.local' / 'share') / 'dxa-qc'
     d.mkdir(parents=True, exist_ok=True)
@@ -49,8 +51,8 @@ def resource(*parts: str) -> Path:
 
 
 def build_info() -> dict:
-    """Из какого коммита собрано приложение: build_info.json пишет
-    desktop/build_windows.ps1 перед сборкой. Из исходников его нет."""
+    """Из какого коммита собрано приложение: build_info.json пишут
+    desktop/build_windows.ps1 и desktop/build_macos.sh. Из исходников его нет."""
     try:
         return json.loads(resource('desktop', 'build_info.json').read_text(encoding='utf-8-sig'))
     except Exception:
@@ -62,7 +64,7 @@ def version_text() -> str:
     if not b.get('commit'):
         return f'{VERSION} (из исходников)'
     dirty = ', с незакоммиченными изменениями' if b.get('dirty') else ''
-    return f"{VERSION} (коммит {b['commit']}{dirty}, собрано {b.get('built', '?')})"
+    return f"{b.get('version', VERSION)} (коммит {b['commit']}{dirty}, собрано {b.get('built', '?')})"
 
 
 def setup_logging() -> Path:
@@ -215,7 +217,7 @@ def open_with_webview(url: str, server: Server | None, log_path: Path) -> None:
         else:
             w.load_html(FAILED.format(title=TITLE, log=log_path))
 
-    icon = resource('desktop', 'assets', 'icon.ico')
+    icon = resource('desktop', 'assets', 'icon.ico' if os.name == 'nt' else 'icon.png')
     webview.start(boot, gui='edgechromium' if os.name == 'nt' else None, private_mode=False,
                   storage_path=str(data_dir() / 'webview'),
                   icon=str(icon) if icon.exists() else None)
