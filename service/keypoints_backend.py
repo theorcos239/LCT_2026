@@ -34,14 +34,14 @@
   0.75 мм (p90 2.18) при разрыве между классами около 2.1 мм и требовании
   ТЗ ≈0.5 мм — это ровно та точность, которой не хватает контурной геометрии.
   Подменять один неуверенный измеритель другим неуверенным незачем.
-- **Укладка позвоночника.** Формально критерий — «видны верхние края
-  подвздошных костей», и у модели на это есть каналы `iliac_right/left` с
-  калиброванным порогом видимости. Предыдущая версия модели дорисовывала
-  гребень, которого нет (узнала отсутствие в 1 кадре из 11), а для этого
-  критерия это и есть пропуск нарушения. Текущая переобучена против
-  выдуманных точек, но нарушений укладки в эталоне шесть, на обученных
-  фолдах 0–1 — два: переводить вердикт не на чем. Видимость уходит в
-  диагностику, вердикт — за `spine_qc`.
+- **Гребни подвздошных (часть укладки).** Каналы `iliac_right/left` остаются
+  диагностикой: нарушений укладки в эталоне шесть, на фолдах 0–1 — два,
+  переводить вердикт гребней на них нельзя. Вердикт гребней — за `spine_qc`.
+- **Половина тела Th12 (вторая часть укладки ТЗ).** Контурный
+  `top_margin_mm` это не измерял (порог OOF = 0). По точкам
+  `th12_top` / `th12_bottom` и шагу L1–L2 считается доля видимого тела;
+  при `frac < 0.5` укладка нарушена. На OOF `keypoints_crops` согласие с
+  геометрией разметки точек F1 ≈ 0.93. Гребни и Th12 в вердикте — через OR.
 - **Артефакты.** Канала под посторонние предметы в модели нет и не
   планировалось: это отдельная задача и отдельная модель.
 
@@ -72,7 +72,8 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from dxa_qc.metrics import axis_angle, axis_curvature   # noqa: E402 — после sys.path
-from dxa_qc.spine_shape import (curve_descriptors, fused_tilt, source_variances,
+from dxa_qc.spine_shape import (apply_scoliosis_to_axis, assess_scoliosis,
+                                curve_descriptors, fused_tilt, source_variances,
                                 tilt_sources)
 from hip_roi.geometry import BOTTOM_MM, LAT_MM, MM_PER_PX, TOP_MM, px2mm
 from spine_qc.criteria import axis_decision
@@ -178,23 +179,33 @@ def axis_from_points(get, params: dict | None = None) -> dict | None:
     decision = axis_decision(fused['theta_fused_deg'], fused['sigma_deg'],
                              fused['Q'], fused['n_sources'],
                              {'uncertainty_k': params.get('uncertainty_k', 1.0)})
+    # Сколиотическая дуга даёт большой угол хорды без дефекта укладки.
+    # Контур гасит такие кадры флагом curved_suppressed; здесь тот же смысл
+    # по кривизне центров (порог 12 мм — флаг axis:curved) + явный признак
+    # по segment_range L1–L4 (assess_scoliosis / apply_scoliosis_to_axis).
+    if decision['state'] == 'unsuitable' and 'axis:curved' in flags:
+        decision = {**decision, 'state': 'undetermined', 'violated': None,
+                    'text': '', 'reasons': [*decision['reasons'],
+                                           'scoliosis_like_curve']}
     if decision['state'] == 'undetermined':
         flags.append('axis:needs_review')
     correction = (None if fused['theta_fused_deg'] is None
                   else float(ang - fused['theta_fused_deg']))
-    return {'angle_deg': (None if fused['theta_fused_deg'] is None
-                          else round(float(fused['theta_fused_deg']), 2)),
-            'angle_centers_deg': round(ang, 2),
-            'angle_edges_deg': None if ang_edges is None else round(ang_edges, 2),
-            'curvature_mm': round(curvature, 1),
-            'disagreement_deg': None if disagree is None else round(disagree, 2),
-            'sigma_deg': fused['sigma_deg'], 'Q': fused['Q'],
-            'weights': fused['weights'], 'sources': sources, 'curve': curve,
-            'variance_params': params,
-            'correction_deg': correction, 'state': decision['state'],
-            'reasons': decision['reasons'],
-            'source': 'keypoints_fused', 'flags': flags,
-            'violated': decision['violated'], 'text': decision['text']}
+    result = {'angle_deg': (None if fused['theta_fused_deg'] is None
+                            else round(float(fused['theta_fused_deg']), 2)),
+              'angle_centers_deg': round(ang, 2),
+              'angle_edges_deg': None if ang_edges is None else round(ang_edges, 2),
+              'curvature_mm': round(curvature, 1),
+              'disagreement_deg': None if disagree is None else round(disagree, 2),
+              'sigma_deg': fused['sigma_deg'], 'Q': fused['Q'],
+              'weights': fused['weights'], 'sources': sources, 'curve': curve,
+              'variance_params': params,
+              'correction_deg': correction, 'state': decision['state'],
+              'reasons': decision['reasons'],
+              'source': 'keypoints_fused', 'flags': flags,
+              'violated': decision['violated'], 'text': decision['text'],
+              'scoliosis': assess_scoliosis(curve)}
+    return apply_scoliosis_to_axis(result, result['scoliosis'])
 
 
 def fuse_axis_with_contour(point_axis: dict, contour_axis: dict) -> dict:
@@ -214,13 +225,15 @@ def fuse_axis_with_contour(point_axis: dict, contour_axis: dict) -> dict:
                              {'uncertainty_k': params.get('uncertainty_k', 1.0)})
     # Контурная конструкция пометила большой угол как изгиб. При конфликте
     # не превращаем его в автоматический брак: у модели точек и контура разные
-    # ошибки, а отдельный порог сколиоза на имеющейся разметке не обоснован.
+    # ошибки. Явный сколиоз по segment_range дожимается ниже.
     if (decision['state'] == 'unsuitable'
             and 'axis:curved_suppressed' in contour_axis.get('flags', [])):
         decision = {**decision, 'state': 'undetermined', 'violated': None,
                     'text': '', 'reasons': [*decision['reasons'],
                                            'scoliosis_like_contour']}
     out = dict(point_axis)
+    scoliosis = (point_axis.get('scoliosis')
+                 or assess_scoliosis(point_axis.get('curve')))
     out.update({
         'angle_deg': (None if fused['theta_fused_deg'] is None
                       else round(float(fused['theta_fused_deg']), 2)),
@@ -231,12 +244,13 @@ def fuse_axis_with_contour(point_axis: dict, contour_axis: dict) -> dict:
                                       - fused['theta_fused_deg'])),
         'state': decision['state'], 'reasons': decision['reasons'],
         'violated': decision['violated'], 'text': decision['text'],
+        'scoliosis': scoliosis,
     })
     flags = [f for f in out.get('flags', []) if f != 'axis:needs_review']
     if decision['state'] == 'undetermined':
         flags.append('axis:needs_review')
     out['flags'] = flags
-    return out
+    return apply_scoliosis_to_axis(out, scoliosis)
 
 
 def axis_from_contour_only(contour_axis: dict, params: dict | None = None,
@@ -330,6 +344,315 @@ def bulge_from_points(get) -> dict | None:
         return None
     return {'bulge_mm': round(px2mm(float(medial[0]) - float(minor[0])), 2),
             'source': 'keypoints', 'verdict': None}
+
+
+# Высота тела Th12 / шаг L1–L2 по 29 кадрам с обоими краями в pack (медиана 0.95).
+# В structure.py для полосы декодера заложено ~0.8 — там допуск, здесь калибр покрытия.
+TH12_BODY_TO_STEP = 0.95
+TH12_HALF_FRAC = 0.5          # ТЗ: видна не меньше половины тела Th12
+# Hard-reject только при видимом th12_bottom и очень малом frac.
+# Сетка 0.05–0.50 на 92 live-кадрах (Processing/eval_th12_full/hard_frac_sweep_live.csv):
+# плато expert F1=0.80 / GT precision=1.0 при hard∈[0.05, 0.13]. Правый край
+# (0.13) на полной НД дал 2 FP / 0 TP vs эксперту (frac 0.066 и 0.091) —
+# берём левый край плато, mid-band остаётся флагом без undetermined.
+TH12_HARD_FRAC = 0.05
+TH12_BORDER_FRAC = 0.05
+# Порог ТЗ для оси (°) — сверка контура с диагностическими точками при
+# закрытом axis-gate (см. reconcile_contour_axis_with_points).
+AXIS_TZ_LIMIT_DEG = 5.0
+# Контурный брак гасим, только если точки явно «норма» (далеко от порога).
+# Без требования corroboration ≥4°: оно роняло recall оси на НД.
+AXIS_POINT_CLEAR_DEG = 3.0
+# Узкий override: контур «норма», но края расходятся и точки ≥ ТЗ → брак.
+# На НД ловит FN (контур 2.7° / точки 5.7° / disagree 3.1°) без blanket-OR.
+AXIS_POINT_OVERRIDE_DISAGREE_DEG = 2.0
+# Выступ малого вертела по точкам: на pack 5–95% ≈ 2.5–10.6 мм, медиана 6.0.
+# Если свод (геометрия/CNN) ставит брак, а точки в «ядре нормы» — гасим FP.
+# Сетка на НД: [3, 8] мм → F1 0.60→0.67, P 0.51→0.70.
+ROTATION_KP_NORMAL_LO_MM = 3.0
+ROTATION_KP_NORMAL_HI_MM = 8.0
+# Медиана |th12_bottom.y − th12_top.y| на pack, px — если L1/L2 не видимы.
+TH12_BODY_PRIOR_PX = 38.0
+
+
+def th12_coverage_from_points(
+    get,
+    image_height: int,
+    body_to_step: float = TH12_BODY_TO_STEP,
+    half_frac: float = TH12_HALF_FRAC,
+    hard_frac: float = TH12_HARD_FRAC,
+    border: float = TH12_BORDER_FRAC,
+    body_prior_px: float = TH12_BODY_PRIOR_PX,
+) -> dict:
+    """Доля тела Th12 в кадре по ключевым точкам (верхняя граница укладки ТЗ).
+
+    Двухпороговое правило (ТЗ закрыт, F1 по эксперту не роняем):
+      * suitable — оба края или frac ≥ half_frac (0.5);
+      * unsuitable (hard → spine_position) — виден th12_bottom и frac < hard_frac;
+      * undetermined (review) — bottom_missing, mid-band [hard, half), prior, граница.
+    Hard только когда нижняя замыкательная в кадре: иначе модель часто
+    «не видит» точку на нормальных кадрах и даёт ложные срабатывания.
+    """
+    del image_height  # API стабилен; y=0 — верх того же массива, что у get().
+    top, bot = get('th12_top'), get('th12_bottom')
+    l1, l2 = get('l1_center'), get('l2_center')
+    disc = get('disc_th12_l1')
+
+    body_meas = (abs(float(bot[1]) - float(top[1]))
+                 if top is not None and bot is not None else None)
+    step = (float(np.linalg.norm(np.asarray(l2, float) - np.asarray(l1, float)))
+            if l1 is not None and l2 is not None else None)
+    body_source = 'measured'
+    if body_meas is not None:
+        body_est = body_meas
+    elif step is not None and step > 1:
+        body_est = body_to_step * step
+        body_source = 'l1_l2_step'
+    elif body_prior_px and body_prior_px > 1:
+        body_est = float(body_prior_px)
+        body_source = 'prior'
+    else:
+        body_est = None
+        body_source = 'none'
+
+    flags: list[str] = []
+    if top is not None and bot is None:
+        return {
+            'state': 'undetermined', 'violated': None, 'frac': None,
+            'reason': 'top_without_bottom', 'needs_review': True,
+            'flags': ['position:th12_undetermined'],
+            'text': '', 'source': 'keypoints', 'body_source': body_source,
+            'body_est_px': None if body_est is None else round(float(body_est), 1),
+            'visible_px': None, 'half_frac': half_frac, 'hard_frac': hard_frac,
+            'body_to_step': body_to_step,
+        }
+    if body_est is None or body_est <= 1:
+        return {
+            'state': 'undetermined', 'violated': None, 'frac': None,
+            'reason': 'body_height_unknown', 'needs_review': True,
+            'flags': ['position:th12_undetermined'],
+            'text': '', 'source': 'keypoints', 'body_source': body_source,
+            'body_est_px': None, 'visible_px': None,
+            'half_frac': half_frac, 'hard_frac': hard_frac,
+            'body_to_step': body_to_step,
+        }
+
+    if top is not None and bot is not None:
+        visible_px = float(body_meas)
+        frac = 1.0
+        reason = 'both_endplates'
+    elif bot is not None:
+        visible_px = max(0.0, float(bot[1]))
+        frac = visible_px / float(body_est)
+        reason = 'bottom_only'
+    else:
+        visible_px = 0.0
+        frac = 0.0
+        reason = 'bottom_missing'
+
+    if disc is not None and bot is not None and float(disc[1]) + 1.0 < float(bot[1]):
+        flags.append('position:th12_disc_inconsistent')
+
+    needs_review = False
+    if reason == 'both_endplates' or frac >= half_frac:
+        state, violated = 'suitable', False
+    elif reason == 'bottom_missing':
+        # Нет нижней замыкательной: ТЗ не подтверждён, но hard-reject по
+        # «невидимости» даёт десятки FP vs эксперту (ошибка видимости модели).
+        state, violated = 'undetermined', None
+        needs_review = True
+        flags.append('position:th12_bottom_missing')
+    elif body_source == 'prior':
+        state, violated = 'undetermined', None
+        needs_review = True
+        flags.append('position:th12_prior_uncertain')
+    elif frac < hard_frac:
+        state, violated = 'unsuitable', True
+        flags.append('position:th12_short')
+    else:
+        # hard_frac ≤ frac < half_frac: зона ТЗ, без автоматического брака.
+        state, violated = 'undetermined', None
+        needs_review = True
+        flags.append('position:th12_review')
+        if abs(frac - half_frac) <= border:
+            flags.append('position:th12_borderline')
+
+    text = ''
+    if violated:
+        text = (f'укладка: видна малая доля тела Th12 '
+                f'({frac:.0%} при hard-пороге {hard_frac:.0%}, норма ТЗ ≥{half_frac:.0%})')
+    return {
+        'state': state, 'violated': violated, 'frac': round(float(frac), 3),
+        'reason': reason, 'needs_review': needs_review,
+        'flags': flags, 'text': text, 'source': 'keypoints',
+        'body_source': body_source,
+        'body_est_px': round(float(body_est), 1),
+        'visible_px': round(float(visible_px), 1),
+        'half_frac': half_frac, 'hard_frac': hard_frac,
+        'body_to_step': body_to_step,
+    }
+
+
+def apply_th12_to_position(position: dict, th12: dict | None) -> dict:
+    """Вшить Th12 в укладку: hard → OR в spine_position; иначе review-флаги."""
+    if not th12:
+        return position
+    out = {**position, 'th12_coverage': th12}
+    if th12.get('frac') is not None:
+        out['th12_frac'] = th12['frac']
+    flags = list(out.get('flags') or [])
+    for flag in th12.get('flags') or []:
+        if flag not in flags:
+            flags.append(flag)
+
+    if th12.get('violated') is True:
+        out['violated'] = True
+        out['th12_violated'] = True
+        out['th12_needs_review'] = False
+        old = (out.get('text') or '').removeprefix('укладка:').strip()
+        th12_msg = (th12.get('text') or '').removeprefix('укладка:').strip()
+        parts = [p for p in (old, th12_msg) if p]
+        uniq: list[str] = []
+        for part in parts:
+            if part not in uniq:
+                uniq.append(part)
+        out['text'] = ('укладка: ' + '; '.join(uniq)) if uniq else ''
+    elif th12.get('violated') is False:
+        out['th12_violated'] = False
+        out['th12_needs_review'] = False
+    else:
+        out['th12_violated'] = None
+        out['th12_needs_review'] = bool(th12.get('needs_review'))
+        if 'position:th12_undetermined' not in flags and out['th12_needs_review']:
+            flags.append('position:th12_undetermined')
+    out['flags'] = flags
+    return out
+
+
+def record_th12_review(out: dict, position: dict) -> None:
+    """Mid-band / bottom_missing Th12 → флаги review, без undetermined.
+
+    Раньше сюда писался ``undetermined`` в violations: на НД это давало
+    ~16 ложных «есть нарушение» на чистых кадрах и роняло binary F1.
+    Hard-Th12 по-прежнему OR'ится в spine_position через apply_th12.
+    """
+    if not position.get('th12_needs_review'):
+        return
+    if position.get('violated'):
+        return  # уже брак по гребням или hard-Th12
+    if 'position:th12_needs_review' not in out['flags']:
+        out['flags'].append('position:th12_needs_review')
+
+
+def reconcile_contour_axis_with_points(
+    contour_axis: dict | None,
+    point_axis: dict | None,
+    *,
+    tz_limit_deg: float = AXIS_TZ_LIMIT_DEG,
+    clear_deg: float = AXIS_POINT_CLEAR_DEG,
+    override_disagree_deg: float = AXIS_POINT_OVERRIDE_DISAGREE_DEG,
+) -> dict | None:
+    """Точки — судья для контурной оси при закрытом gate.
+
+    Полный fused-verdict закрыт OOF-гейтом. Правила (НД, spine):
+      * контур «брак», |θ_точек| < clear_deg → гасим;
+      * контур «норма», |θ_точек| ≥ tz_limit и расхождение краёв
+        > override_disagree_deg → брак по точкам (``axis:point_overrides_contour``);
+      * контур «норма», |θ_точек| ≥ tz_limit без расхождения → только флаг
+        ``axis:point_tilt_over_tz`` (без автобрака).
+    Сильный сколиоз гасится позже ``apply_scoliosis_to_axis``.
+    """
+    if not contour_axis:
+        return contour_axis
+    if not point_axis:
+        return contour_axis
+    point_ang = point_axis.get('angle_deg')
+    if point_ang is None:
+        point_ang = point_axis.get('angle_centers_deg')
+    if point_ang is None:
+        return contour_axis
+    point_abs = abs(float(point_ang))
+    out = dict(contour_axis)
+    flags = list(out.get('flags') or [])
+    if 'axis:points_missing' in flags:
+        return contour_axis
+
+    out['point_angle_deg'] = round(float(point_ang), 2)
+    disagree = out.get('disagreement_deg')
+    if disagree is None and 'axis:estimates_disagree' in flags:
+        disagree = override_disagree_deg + 0.1
+
+    if out.get('violated') is True and point_abs < clear_deg:
+        out['violated'] = False
+        out['text'] = ''
+        if 'state' in out:
+            out['state'] = 'suitable'
+        flags = [f for f in flags if f != 'axis:needs_review']
+        if 'axis:point_clears_contour' not in flags:
+            flags.append('axis:point_clears_contour')
+        out['flags'] = flags
+        return out
+
+    if (out.get('violated') is not True and point_abs >= tz_limit_deg
+            and disagree is not None
+            and float(disagree) > override_disagree_deg):
+        out['violated'] = True
+        out['text'] = (f'ось позвоночника отклонена на {point_abs:.1f}° по точкам '
+                       f'(контур ненадёжен: расхождение краёв {float(disagree):.1f}°; '
+                       f'допустимо {tz_limit_deg:.0f}°)')
+        if 'state' in out:
+            out['state'] = 'unsuitable'
+        if 'axis:point_overrides_contour' not in flags:
+            flags.append('axis:point_overrides_contour')
+        # убрать «мягкий» флаг tilt, если был
+        flags = [f for f in flags if f != 'axis:point_tilt_over_tz']
+        out['flags'] = flags
+        return out
+
+    if out.get('violated') is not True and point_abs >= tz_limit_deg:
+        if 'axis:point_tilt_over_tz' not in flags:
+            flags.append('axis:point_tilt_over_tz')
+        out['flags'] = flags
+        return out
+
+    return out
+
+
+def judge_rotation_with_points(
+    rotation: dict | None,
+    kp_bulge_mm: float | None,
+    *,
+    normal_lo: float = ROTATION_KP_NORMAL_LO_MM,
+    normal_hi: float = ROTATION_KP_NORMAL_HI_MM,
+) -> dict | None:
+    """Точки — судья в споре по ротации: нормальный выступ снимает брак.
+
+    Никогда не создаёт нового нарушения (только гасит FP). Если точек нет —
+    вердикт свода геометрия+CNN не трогаем.
+    """
+    if not rotation or rotation.get('violated') is not True:
+        return rotation
+    if kp_bulge_mm is None or not np.isfinite(float(kp_bulge_mm)):
+        return rotation
+    bulge = float(kp_bulge_mm)
+    out = dict(rotation)
+    out['keypoints_bulge_mm'] = round(bulge, 2)
+    flags = list(out.get('flags') or [])
+    if normal_lo <= bulge <= normal_hi:
+        out['violated'] = False
+        out['text'] = ''
+        out['geometry_violated'] = out.get('geometry_violated')
+        if 'rotation:points_normal_bulge' not in flags:
+            flags.append('rotation:points_normal_bulge')
+        out['flags'] = flags
+        out['confidence'] = 'low'
+        out['method'] = (str(out.get('method') or 'ротация')
+                         + '; точки: выступ в норме → брак снят')
+        return out
+    if 'rotation:points_abnormal_bulge' not in flags:
+        flags.append('rotation:points_abnormal_bulge')
+    out['flags'] = flags
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -464,6 +787,8 @@ class KeypointBackend:
         """Кадр -> измерения по точкам. Вердикт выносится только там, где он проверен.
 
         `axis` и `roi` не None — конвейер берёт их вместо контурных.
+        `th12_coverage` — верхняя граница укладки ТЗ; конвейер OR'ит её в
+        `spine_position` (гребни по-прежнему за контуром).
         `rotation` и `iliac` — всегда только диагностика.
         """
         kp = self.points(px, region)
@@ -487,6 +812,7 @@ class KeypointBackend:
         res = {
             'region_model': kp['region'],
             'axis': None, 'roi': None, 'rotation': None, 'iliac': None,
+            'th12_coverage': None,
             'axis_diagnostic': None, 'roi_diagnostic': None,
             'multicrop': kp.get('multicrop'),
             'points': {n: {'x': round(float(kp['coords'][i][0]), 1),
@@ -513,6 +839,20 @@ class KeypointBackend:
                 flags.append('keypoints:axis_gate_failed')
             res['iliac'] = {side: bool(kp['visible'][idx[f'iliac_{side}']])
                             for side in ('right', 'left') if f'iliac_{side}' in idx}
+            # Покрытие Th12 не зависит от axis-gate: контур эту половину ТЗ
+            # не меряет, а геометрическое правило по точкам проверено на OOF.
+            th12 = th12_coverage_from_points(get, int(px.shape[0]))
+            if abstain and th12.get('violated') is not None:
+                th12 = {
+                    **th12,
+                    'state': 'undetermined',
+                    'violated': None,
+                    'flags': list(th12.get('flags') or []) + [
+                        'position:th12_numbering_doubt'],
+                    'text': '',
+                }
+            res['th12_coverage'] = th12
+            flags += [f for f in th12.get('flags') or [] if f not in flags]
         else:
             roi = roi_from_points(get, px.shape, region)
             res['roi_diagnostic'] = roi

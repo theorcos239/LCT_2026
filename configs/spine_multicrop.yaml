@@ -981,6 +981,13 @@ center_max_shift_step: 0.25
 edge_margin_px: 10
 min_crop_px: 96
 disagree_mm: 6.0
+# Порог удаления кандидата у верифицированного соседа = mean/3 расстояния
+# центров этой пары во врачебной разметке (data/keypoints.npz, 92 spine,
+# 0.6 мм/px): L1–L2 31.184 мм, L2–L3 32.463 мм, L3–L4 33.846 мм.
+neighbor_exclusion_mm:
+  l1_l2: 10.39
+  l2_l3: 10.82
+  l3_l4: 11.28
 anchor:
   step_ratio_max: 1.6
   chain_gap_min: 0.15

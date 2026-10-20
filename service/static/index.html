@@ -305,6 +305,9 @@ const FLAGS = {
   'axis:column_not_found': 'Колонна позвоночника не найдена — угол не измерен.',
   'axis:edges_not_found': 'Боковые края позвонков не найдены — вторая оценка угла недоступна.',
   'axis:keypoints_vs_contour_disagree': 'Угол по модели точек и по контуру расходится больше чем на 2°.',
+  'axis:scoliosis_suppressed': 'По точкам L1–L4 видна сколиотическая дуга: большой угол оси сочли изгибом, а не наклоном укладки — нарушение оси не выставлено.',
+  'axis:scoliosis_review': 'Подозрение на сколиоз по точкам при спорном угле оси — нужна проверка человеком.',
+  'scoliosis:present': 'По размаху углов сегментов L1–L4 модель точек отмечает сколиотическую дугу (справочно, не тип нарушения ТЗ).',
   'position:estimates_disagree': 'Геометрия и вид кадра расходятся в оценке укладки.',
   'position:iliac_missing_one_side': 'Гребень подвздошной кости не найден с одной стороны.',
   'position:no_appearance_model': 'Модель вида кадра недоступна — укладка оценена только геометрией.',
@@ -698,8 +701,10 @@ function renderCard(r) {
 
   const c = cls(r), vs = violations(r);
   const head = { ok: 'Качественный снимок', bad: 'Есть нарушение', warn: 'Область не определена — нужен ручной разбор', err: 'Сбой обработки' }[c];
-  const sub = c === 'bad' ? vs.map(x => S.full[x] || x).join('; ') : c === 'err' ? humanError(r.error) :
+  let sub = c === 'bad' ? vs.map(x => S.full[x] || x).join('; ') : c === 'err' ? humanError(r.error) :
               c === 'warn' ? 'Кадр не похож на DXA позвоночника или бедра, либо перевёрнут.' : REGION[r.anatomical_region] || '';
+  if (r.anatomical_region === 'spine' && (r.scoliosis === 'yes' || r.scoliosis === 'no'))
+    sub = (sub ? sub + ' · ' : '') + (r.scoliosis === 'yes' ? 'сколиоз: да' : 'сколиоз: нет');
   $('#verdict').className = 'verdict ' + c;
   $('#verdict').innerHTML = `${esc(head)}<small>${esc(sub)}</small>`;
 
@@ -744,7 +749,7 @@ function criteria(r) {
   if (isFail(r)) return [];
   if (d.spine) {
     const ax = d.spine.axis || {}, pos = d.spine.position || {}, art = d.spine.artifacts || {};
-    const byKp = ax.source === 'keypoints';
+    const byKp = ax.source === 'keypoints' || ax.source === 'keypoints_fused';
     const lim = byKp ? (S.cfg.axis_limit_deg_tz || 5) : (thr.axis_deg || 5);
     const notes = [];
     if (ax.angle_edges_deg != null && !byKp) notes.push(`по краям колонны ${fmt(Math.abs(ax.angle_edges_deg))}°`);
@@ -753,6 +758,22 @@ function criteria(r) {
     out.push({ name: 'Ось позвоночника', ok: ax.violated == null ? null : !ax.violated,
       val: ax.angle_deg == null ? 'не измерена' : `${fmt(Math.abs(ax.angle_deg))}°`, norm: `≤ ${fmt(lim, lim % 1 ? 2 : 0)}°`,
       note: notes.join(' · '), bar: ax.angle_deg == null ? null : { v: Math.abs(ax.angle_deg), lo: 0, hi: lim, max: Math.max(lim * 2, Math.abs(ax.angle_deg) * 1.1) } });
+    const scol = d.spine.scoliosis || ax.scoliosis || {};
+    if (scol.available) {
+      const seg = scol.segment_range_deg, lat = scol.lateral_dev_mm;
+      const lo = scol.report_thr_deg ?? 12, hi = scol.seg_hi_deg ?? 16;
+      const ext = scol.seg_extreme_deg ?? 20, latExt = scol.lat_extreme_mm ?? 4;
+      out.push({ name: 'Сколиоз (L1–L4 по точкам)', ok: null,
+        val: scol.present ? 'да' : 'нет', norm: 'справочно, высокий precision',
+        note: seg == null ? 'центры L1–L4 не собраны' :
+          `размах ${fmt(seg)}°` + (lat != null ? `, лат. ${fmt(lat)} мм` : '')
+          + ` · да, если ${fmt(lo,0)}–${fmt(hi,0)}° или ≥${fmt(ext,0)}° при лат.≥${fmt(latExt,0)} мм`
+          + (scol.strength && scol.strength !== 'none' ? ` · ${scol.strength === 'strong' ? 'сильный: влияет на ось' : 'слабый: ось только при подтверждении'}` : ''),
+        bar: seg == null ? null : { v: seg, lo: 0, hi: lo, max: Math.max(ext * 1.2, seg * 1.1, 24) } });
+    } else if (r.scoliosis === 'yes' || r.scoliosis === 'no') {
+      out.push({ name: 'Сколиоз (L1–L4 по точкам)', ok: null,
+        val: r.scoliosis === 'yes' ? 'да' : 'нет', norm: 'справочно', note: '' });
+    }
     out.push({ name: 'Укладка: гребни подвздошных костей', ok: pos.violated == null ? null : !pos.violated,
       val: pos.violated ? 'не видны' : 'видны', norm: 'видны',
       note: pos.iliac_area == null ? '' : `доля кости в зонах гребней ${fmt(pos.iliac_area, 3)} (порог ${fmt(thr.iliac_area ?? 0.001, 3)})`

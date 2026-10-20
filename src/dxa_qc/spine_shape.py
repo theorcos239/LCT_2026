@@ -73,6 +73,24 @@ def tilt_sources(points: np.ndarray, visible: np.ndarray, names: list[str],
     }
 
 
+# Высокоточное правило сколиоза (pack/fold2, приоритет — не ставить там,
+# где его нет): P=1.0, FP=0, TP=5 из 12.
+#   • средняя дуга: segment_range ∈ [12°, 16°]
+#   • экстремум: seg≥20° и только с lateral_dev≥4 мм (один seg без латерали
+#     часто сбой точек: 16–26° без метки сколиоза)
+#   • зазор 16–20° намеренно пуст
+# Сильный режим (гашение оси): mid-band ≥14° или экстремум. Max seg среди
+# y_axis=1 ≈8.4° — ни одно срабатывание туда не попадает.
+SCOLIOSIS_SEG_LO_DEG = 12.0
+SCOLIOSIS_SEG_HI_DEG = 16.0
+SCOLIOSIS_SEG_EXTREME_DEG = 20.0
+SCOLIOSIS_LAT_EXTREME_MM = 4.0
+SCOLIOSIS_STRONG_SEG_DEG = 14.0
+# Обратная совместимость имён (раньше были простые пороги ≥).
+SCOLIOSIS_REPORT_DEG = SCOLIOSIS_SEG_LO_DEG
+SCOLIOSIS_STRONG_DEG = SCOLIOSIS_STRONG_SEG_DEG
+
+
 def curve_descriptors(points: np.ndarray, visible: np.ndarray, names: list[str],
                       pixel_mm: float = .6) -> dict:
     """Кривизна и положение вершины дуги в нормированных шагах L1-L4."""
@@ -114,6 +132,126 @@ def curve_descriptors(points: np.ndarray, visible: np.ndarray, names: list[str],
         "segment_angles_deg": segment_angles,
         "segment_range_deg": float(np.ptp(segment_angles)),
     }
+
+
+def assess_scoliosis(curve: dict | None,
+                     report_thr: float | None = None,
+                     strong_thr: float | None = None) -> dict:
+    """Сколиоз по размаху сегментов L1–L4 с упором на precision.
+
+    Не тип нарушения ТЗ: поле отчёта + осторожная политика оси.
+    ``strength``: ``none`` / ``weak`` (есть, ось только с corroboration) /
+    ``strong`` (можно гасить ложный наклон хорды).
+
+    ``report_thr`` / ``strong_thr`` — опциональные переопределения нижней
+    границы mid-band и порога strong внутри неё (тесты/калибровка).
+    """
+    seg_lo = float(report_thr if report_thr is not None else SCOLIOSIS_SEG_LO_DEG)
+    strong_lo = float(strong_thr if strong_thr is not None else SCOLIOSIS_STRONG_SEG_DEG)
+    meta = {
+        "report_thr_deg": seg_lo, "strong_thr_deg": strong_lo,
+        "seg_hi_deg": SCOLIOSIS_SEG_HI_DEG,
+        "seg_extreme_deg": SCOLIOSIS_SEG_EXTREME_DEG,
+        "lat_extreme_mm": SCOLIOSIS_LAT_EXTREME_MM,
+    }
+    if not curve or not curve.get("available"):
+        return {
+            "available": False, "present": False, "strength": "none",
+            "segment_range_deg": None, "lateral_dev_mm": None, **meta,
+        }
+    seg = float(curve["segment_range_deg"])
+    lat = float(curve.get("lateral_dev_mm") or 0.0)
+    mid = seg_lo <= seg <= SCOLIOSIS_SEG_HI_DEG
+    extreme = (seg >= SCOLIOSIS_SEG_EXTREME_DEG
+               and lat >= SCOLIOSIS_LAT_EXTREME_MM)
+    present = bool(mid or extreme)
+    if not present:
+        strength = "none"
+    elif extreme or seg >= strong_lo:
+        strength = "strong"
+    else:
+        strength = "weak"
+    return {
+        "available": True, "present": present, "strength": strength,
+        "segment_range_deg": round(seg, 2),
+        "lateral_dev_mm": round(lat, 2),
+        **meta,
+    }
+
+
+def apply_scoliosis_to_axis(axis: dict | None, scoliosis: dict | None) -> dict | None:
+    """Смягчить вердикт оси при сколиозе. Никогда не создаёт новое нарушение.
+
+    Политика (pack/fold2: флаг сколиоза только при FP=0; expert редко
+    ставит y_axis при сколиозе):
+
+    * ``strong`` + ось «брак»/review → как ``curved_suppressed``:
+      violated=False, флаг ``axis:scoliosis_suppressed``.
+    * ``weak`` + ось «брак» + подтверждение изгиба/расхождения →
+      undetermined / review, не авто-OK.
+    * ``weak`` без подтверждения → ось не трогаем.
+    * чистая ось → не трогаем.
+    """
+    if not axis or not scoliosis or not scoliosis.get("available"):
+        return axis
+    out = dict(axis)
+    out["scoliosis"] = scoliosis
+    flags = list(out.get("flags") or [])
+    reasons = list(out.get("reasons") or [])
+    strength = scoliosis.get("strength") or "none"
+    if strength == "none":
+        out["flags"] = flags
+        return out
+
+    state = out.get("state")
+    violated = out.get("violated")
+    # Уже чистое OK не трогаем. Недоступные источники — тоже (не маскируем
+    # «точек нет» под сколиоз).
+    if violated is False and state in (None, "suitable"):
+        out["flags"] = flags
+        return out
+    if "sources_missing" in reasons or "axis:points_missing" in flags:
+        out["flags"] = flags
+        return out
+
+    corroboration = any(f in flags for f in (
+        "axis:estimates_disagree", "axis:curved_suppressed", "axis:curved",
+    )) or any(r in reasons for r in (
+        "scoliosis_like_curve", "scoliosis_like_contour", "sources_disagree",
+    ))
+    is_hard = (violated is True) or (state == "unsuitable")
+
+    if strength == "strong" and (is_hard or violated is None or state == "undetermined"):
+        # Сильный размах сегментов: и жёсткий брак, и «дуга → review» гасим
+        # до OK — эксперт на сколиозе y_axis почти не ставит.
+        out["violated"] = False
+        out["text"] = ""
+        if state is not None or "state" in out:
+            out["state"] = "suitable"
+        flags = [f for f in flags if f != "axis:needs_review"]
+        if "axis:scoliosis_suppressed" not in flags:
+            flags.append("axis:scoliosis_suppressed")
+        if "scoliosis_segment_range" not in reasons:
+            reasons.append("scoliosis_segment_range")
+        out["reasons"] = reasons
+        out["flags"] = flags
+        return out
+
+    # weak: только review при подтверждении изгиба/расхождения
+    if strength == "weak" and is_hard and corroboration:
+        out["violated"] = None
+        out["text"] = ""
+        if "state" in out or state is not None:
+            out["state"] = "undetermined"
+        if "axis:needs_review" not in flags:
+            flags.append("axis:needs_review")
+        if "axis:scoliosis_review" not in flags:
+            flags.append("axis:scoliosis_review")
+        if "scoliosis_borderline" not in reasons:
+            reasons.append("scoliosis_borderline")
+        out["reasons"] = reasons
+    out["flags"] = flags
+    return out
 
 
 def source_variances(src: dict, curve: dict, params: dict | None = None,

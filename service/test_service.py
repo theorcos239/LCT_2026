@@ -373,21 +373,22 @@ def test_cnn() -> None:
 
 
 def test_roi_rule() -> None:
-    """Отступы ROI: вердикт по длине поля (как эксперт), отступы по рисунку 6 — в деталях."""
+    """Отступы ROI: по умолчанию рис. 6 ТЗ; scan_length — альтернатива."""
     from .dicom_io import unique_frames
     from .pipeline import Analyzer
     study = sorted(DATA.iterdir())[0]
     frames, _ = unique_frames(study)
-    a, m = Analyzer.load(cnn=False), Analyzer.load(cnn=False, roi_rule='margins')
-    hips = [(a.analyze_pixels(f.pixels), m.analyze_pixels(f.pixels)) for f in frames]
+    a, s = Analyzer.load(cnn=False), Analyzer.load(cnn=False, roi_rule='scan_length')
+    hips = [(a.analyze_pixels(f.pixels), s.analyze_pixels(f.pixels)) for f in frames]
     hips = [(x, y) for x, y in hips if x['anatomical_region'] in ('lh', 'rh')]
     ok = bool(hips) and all(
-        x['details']['hip_roi']['roi_rule'] == 'scan_length'
-        and x['details']['hip_roi']['roi_ok'] == x['details']['hip_roi']['field_ok']
-        and x['details']['hip_roi']['margins_ok'] == y['details']['hip_roi']['roi_ok']
+        x['details']['hip_roi']['roi_rule'] == 'margins'
+        and x['details']['hip_roi']['roi_ok'] == x['details']['hip_roi']['margins_ok']
+        and y['details']['hip_roi']['roi_rule'] == 'scan_length'
+        and y['details']['hip_roi']['roi_ok'] == y['details']['hip_roi']['field_ok']
         and x['details']['hip_roi']['m_top_mm'] == y['details']['hip_roi']['m_top_mm']
         for x, y in hips)
-    check('ROI: вердикт по длине поля, отступы по рисунку 6 сохранены', ok, f'кадров {len(hips)}')
+    check('ROI: вердикт по рис. 6 ТЗ, длина поля доступна как scan_length', ok, f'кадров {len(hips)}')
 
 
 def test_orientation() -> None:

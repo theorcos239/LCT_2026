@@ -96,7 +96,7 @@ def analyzer() -> Analyzer:
                 keypoints_verdict=os.environ.get(
                     'DXA_QC_KEYPOINTS_VERDICT', '') not in ('', '0', 'false'),
                 cnn=os.environ.get('DXA_QC_CNN', '1') not in ('0', 'false'),
-                roi_rule=os.environ.get('DXA_QC_ROI_RULE', 'scan_length'))
+                roi_rule=os.environ.get('DXA_QC_ROI_RULE', 'margins'))
     return _analyzer
 
 
@@ -249,6 +249,7 @@ async def analyze(file: UploadFile = File(...)) -> JSONResponse:
         'quality_class': int(bool(res['violations'])),
         'violation_type': ';'.join(res['violations']),
         'violation_description': [VIOLATIONS[v] for v in res['violations']],
+        'scoliosis': res.get('scoliosis', ''),
         'region_confidence': res.get('region_confidence'),
         'quality_probability': res.get('quality_probability'),
         'probabilities': res.get('probabilities', {}),

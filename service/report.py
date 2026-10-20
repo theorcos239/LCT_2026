@@ -17,8 +17,8 @@ import pandas as pd
 
 from .pipeline import COLUMNS
 
-EXTRA = ['projection', 'violation_description', 'quality_probability', 'p_spine_position',
-         'p_spine_axis', 'p_spine_artifacts', 'p_hip_rotation', 'p_hip_roi',
+EXTRA = ['projection', 'violation_description', 'quality_probability', 'scoliosis',
+         'p_spine_position', 'p_spine_axis', 'p_spine_artifacts', 'p_hip_rotation', 'p_hip_roi',
          'region_confidence', 'region_accepted', 'file_name', 'duplicates', 'flags', 'error']
 
 
@@ -68,6 +68,7 @@ def write_details(rows: list[dict], path: str | Path) -> Path:
                 'anatomical_region': r.get('anatomical_region'),
                 'quality_class': r.get('quality_class'),
                 'quality_probability': r.get('quality_probability'),
+                'scoliosis': r.get('scoliosis', ''),
                 'violation_type': r.get('violation_type'),
                 'violation_description': r.get('violation_description'),
                 'processing_status': r.get('processing_status'),

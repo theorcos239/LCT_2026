@@ -249,8 +249,10 @@ def iliac_masses(col: SpineColumn) -> dict:
 def top_margin_mm(col: SpineColumn) -> float | None:
     """Сколько миллиметров колонны видно от верха кадра до первого valid-ряда.
 
-    Прокси верхней границы укладки ТЗ («половина тела Th12»). Порог
-    `top_margin_min_mm` (если > 0) включает это число в геометрический вердикт.
+    Слабый прокси верхней границы укладки ТЗ («половина тела Th12»): не знает
+    уровня Th12. Порог `top_margin_min_mm` (если > 0) включает число в вердикт;
+    OOF обычно выбирает 0. Рабочая проверка половины Th12 — по ключевым точкам
+    в `service.keypoints_backend.th12_coverage_from_points`.
     """
     b = np.flatnonzero(col.valid)
     return px2mm(float(b[0])) if b.size else None

@@ -7,8 +7,9 @@
     r['p_cnn'], r['probability'], r['violated'], r['heatmap']
 
 Сеть отвечает на вопрос «похож ли кадр на нарушение», свод с геометрией — «есть
-ли нарушение»: вероятность = логистическая регрессия по логиту сети и
-геометрическому скору критерия, порог — из OOF (train.py, meta.json).
+ли нарушение»: вероятность = логистическая регрессия по логиту сети,
+геометрическому скору и (для ротации) выступу по ключевым точкам; порог —
+из OOF (train.py, meta.json).
 
 Детерминизм (ТЗ 2.7): один поток на сессию и последовательное исполнение —
 многопоточная редукция в свёртках складывает в недетерминированном порядке.
@@ -58,11 +59,17 @@ def _sigmoid(z) -> float:
     return float(1.0 / (1.0 + np.exp(-float(z))))
 
 
-def _stack(meta: dict, p_cnn: float, geometry: float | None) -> float:
+def _stack(meta: dict, p_cnn: float, geometry: float | None,
+           keypoints: float | None = None) -> float:
     s = meta['stack']
     p = min(max(p_cnn, 1e-6), 1 - 1e-6)
     g = geometry if geometry is not None and np.isfinite(geometry) else 0.0
     z = s['w_cnn_logit'] * np.log(p / (1 - p)) + s['w_geometry'] * g + s['b']
+    if 'w_keypoints' in s:
+        fill = float(s.get('keypoints_impute', 0.0))
+        kp = (float(keypoints) if keypoints is not None and np.isfinite(keypoints)
+              else fill)
+        z = z + s['w_keypoints'] * kp
     return float(1.0 / (1.0 + np.exp(-np.clip(z, -30, 30))))
 
 
@@ -126,11 +133,13 @@ class CnnQC:
             ps.append(p)
         return float(np.mean(ps)), np.mean(cams, axis=0)
 
-    def assess(self, c: str, px: np.ndarray, region: str, geometry: float | None) -> dict:
+    def assess(self, c: str, px: np.ndarray, region: str, geometry: float | None,
+               keypoints: float | None = None) -> dict:
         """Вероятность сети, свод с геометрией и вердикт по порогу из meta.json."""
         p, cam = self.p_cnn(c, px, region)
         meta = self.meta[c]
-        prob = p if meta.get('verdict') == 'cnn' else _stack(meta, p, geometry)
+        prob = (p if meta.get('verdict') == 'cnn'
+                else _stack(meta, p, geometry, keypoints))
         return {'p_cnn': round(p, 4), 'probability': round(prob, 4),
                 'threshold': meta['threshold'], 'violated': bool(prob >= meta['threshold']),
                 'heatmap': heatmap(cam, px.shape, region)}
