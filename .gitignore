@@ -1,24 +1,21 @@
 __pycache__/
 *.pyc
+/.venv-local/
+/:memory:.ses
 # Нейросетевые чекпоинты хранятся отдельно от Git (в том числе вне runs/).
 *.pt
 *.pth
 *.ckpt
 *.safetensors
-# Прогоны модели точек: веса (fold*.pt, 187 МБ; *_last.pt — ещё 780 МБ) в git
-# не кладутся. Мелкие файлы прогона — нужны: конфиг и пороги видимости
-# читаются при инференсе, метрики и история обучения — отчётность (ТЗ 8.4),
-# oof.npz — OOF-предсказания, из которых метрики пересчитываются.
+# Прогоны модели точек: веса и построчные предсказания остаются локально.
+# Публикуются конфигурация, агрегированные метрики и история обучения.
 runs/**
 !runs/keypoints/
 !runs/keypoints/config.yaml
 !runs/keypoints/thresholds.csv
 !runs/keypoints/metrics_*.csv
 !runs/keypoints/fold*_history.csv
-!runs/keypoints/oof.npz
-!runs/keypoints/oof_points.csv
-# Прогон с подтверждёнными врачебными кропами. Веса отсекаются *.pt;
-# конфиг, пороги, метрики и OOF без пикселей — в git.
+# Прогон с подтверждёнными врачебными кропами: только общие показатели.
 !runs/keypoints_crops/
 !runs/keypoints_crops/config.yaml
 !runs/keypoints_crops/thresholds.csv
@@ -27,12 +24,6 @@ runs/**
 !runs/keypoints_crops/metrics_*.csv
 !runs/keypoints_crops/metrics_*.json
 !runs/keypoints_crops/fold*_history.csv
-!runs/keypoints_crops/fold0_paired_spine.csv
-!runs/keypoints_crops/oof.npz
-!runs/keypoints_crops/oof_points.csv
-!runs/keypoints_crops/oof_truncated.npz
-!runs/keypoints_crops/oof_evaluated.npz
-!runs/keypoints_crops/oof_evaluated_truncated.npz
 # Метрики сравнения «точки против контура» на кадрах обученных фолдов 0–1
 # (python -m service.evaluate --folds 0 1 --no-cnn --roi-rule margins
 # [--keypoints-oof] --out runs/eval_oof[_contour]/metrics.json) — на них
@@ -71,12 +62,24 @@ runs/**
 *.dcm
 /НД_для_обучения/
 /data/*.npz
+# Клиническая разметка, координаты и отчёты по отдельным исследованиям
+# хранятся только локально, даже если пикселей в файле нет.
 /Processing/
-# JSON врачебных нарезок содержит только рамки и координаты, без DXA-пикселей.
-!/Processing/
-/Processing/*
-!/Processing/dxa-crops.json
-!/Processing/metrics_full_table.xlsx
+/data/
+/folds.csv
+/cnn_qc/*/oof.csv
+/hip_roi/eval/margins_*.csv
+/hip_rotation/measurements.csv
+/region_clf/labels.csv
+/service/evaluation.csv
+/spine_qc/measurements.csv
+/runs/keypoints/oof.npz
+/runs/keypoints/oof_points.csv
+/runs/keypoints_crops/oof*.npz
+/runs/keypoints_crops/oof_points.csv
+/runs/keypoints_crops/fold0_paired_spine.csv
+/runs/keypoints_crops/metrics_anchor_frames.csv
+/runs/keypoints_crops/metrics_semantic_paired.csv
 /notebooks/
 /hip_roi/eval/*.png
 /hip_roi/contradictions/

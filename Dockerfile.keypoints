@@ -19,6 +19,8 @@ USER root
 RUN pip install --no-cache-dir \
         --index-url https://download.pytorch.org/whl/cpu \
         torch==2.5.1 torchvision==0.20.1
+RUN pip install --no-cache-dir PyYAML==6.0.3
+COPY --chown=dxa:dxa configs/spine_multicrop.yaml configs/spine_multicrop.yaml
 USER dxa
 
 ENV DXA_QC_KEYPOINTS=1

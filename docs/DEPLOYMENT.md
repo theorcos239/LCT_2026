@@ -3,6 +3,9 @@
 Для кого: инженер, который поднимает сервис на Linux-сервере или проверочном
 стенде. Что сервис делает — в [USER_GUIDE.md](USER_GUIDE.md).
 
+Текущий стенд bigdata10 и команды проверки описаны в
+[BIGDATA10.md](BIGDATA10.md).
+
 ## Требования
 
 | | минимум | рекомендуется |
@@ -111,10 +114,10 @@ docker run --rm --user "$(id -u):$(id -g)" \
 | `FMT` | run.sh batch | `xlsx` | `xlsx` или `csv` |
 | `IMAGE`, `TAG` | build.sh, run.sh | `dxa-qc`, `1.0.0` | имя образа |
 | `DXA_QC_CNN` | контейнер/процесс API | включено | `0` — выключить нейросетевое второе мнение (ротация и посторонние предметы только по геометрии) |
-| `DXA_QC_ROI_RULE` | контейнер/процесс API | `scan_length` | правило вердикта `hip_roi`: `scan_length` — по длине поля, как эксперт; `margins` — строго по рисунку 6 ТЗ. У CLI то же — `--roi-rule` |
+| `DXA_QC_ROI_RULE` | контейнер/процесс API | `margins` | правило вердикта `hip_roi`: `margins` — по рисунку 6 ТЗ; `scan_length` — прежнее правило длины поля. У CLI то же — `--roi-rule` |
 | `DXA_QC_KEYPOINTS` | контейнер/процесс API | выключено | `1` — включить модель ключевых точек (нужны torch и веса, см. ниже) |
 | `DXA_QC_JOB_TTL_HOURS` | контейнер/процесс API | 24 | сколько часов хранить результаты завершённых заданий `/batch` |
-| `ROI_RULE` | run.sh | `scan_length` | то же, что `DXA_QC_ROI_RULE`, для `./run.sh` и `./run.sh batch` |
+| `ROI_RULE` | run.sh | `margins` | то же, что `DXA_QC_ROI_RULE`, для `./run.sh` и `./run.sh batch` |
 | `DXA_QC_TG_TOKEN` | бот | — | токен Telegram-бота; хранится в `.env` (в git не попадает) |
 | `DXA_QC_TG_ALLOWED` | бот | пусто — всем | id или `@username` через запятую, кому можно пользоваться ботом |
 | `DXA_QC_DEMO` | бот | `demo.zip` в корне | архив для команды `/demo` |
@@ -201,6 +204,10 @@ python -m bot                                        # из репозитори
 вариант образа — `Dockerfile.keypoints`: базовый образ (1.4 ГБ) плюс
 torch/torchvision в CPU-сборке. Веса (`runs/keypoints`, 187 МБ) в образ не
 кладутся и монтируются снаружи:
+
+На Mac проще запустить локальное приложение из репозитория:
+`sh tools/launch_local_app.command`. Оно использует уже имеющиеся веса из
+`runs/keypoints_crops/`; см. [LOCAL_APP.md](LOCAL_APP.md).
 
 ```bash
 ./build.sh                                             # сначала базовый образ

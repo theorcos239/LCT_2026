@@ -5,8 +5,7 @@
 #   ./run.sh batch /путь/к/исследованиям  пакетная обработка, отчёт в ./out
 #   ./run.sh bot                          Telegram-бот (токен — DXA_QC_TG_TOKEN или .env)
 #   PORT=9000 ./run.sh                    другой порт
-#   ROI_RULE=margins ./run.sh batch ...   отступы ROI строго по рисунку 6 ТЗ
-#                                         (по умолчанию — по длине поля, как эксперт)
+#   ROI_RULE=scan_length ./run.sh batch ...  прежнее правило длины поля
 #
 # Папка с исследованиями монтируется только на чтение: сервис не должен
 # изменять исходные медицинские данные ни при каких обстоятельствах.
@@ -16,7 +15,7 @@ IMAGE="${IMAGE:-dxa-qc}"
 TAG="${TAG:-1.0.0}"
 PORT="${PORT:-8000}"
 OUT="${OUT:-$(pwd)/out}"
-ROI_RULE="${ROI_RULE:-scan_length}"
+ROI_RULE="${ROI_RULE:-margins}"
 MODE="${1:-serve}"
 HERE=$(cd "$(dirname "$0")" && pwd)
 

@@ -45,8 +45,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument('--keypoints-verdict', action='store_true',
                     help='разрешить проверенной модели точек подменять контурный вердикт')
     ap.add_argument('--roi-rule', default='margins', choices=('scan_length', 'margins'),
-                    help='отступы ROI: длина поля, как оценивает эксперт (по умолчанию), '
-                         'или отступы от ориентиров буквально по рисунку 6 ТЗ')
+                    help='отступы ROI: по рисунку 6 ТЗ (по умолчанию); '
+                         'scan_length — прежнее правило длины поля')
     ap.add_argument('--no-cnn', action='store_true',
                     help='без нейросетевого второго мнения (cnn_qc): вердикт по одной геометрии')
     ap.add_argument('--json', action='store_true', help='сводку вывести как JSON')

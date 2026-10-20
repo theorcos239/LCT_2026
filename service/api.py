@@ -181,8 +181,10 @@ def health() -> dict:
         cnn = a.cnn
         nets = {f'cnn_{c}': bool(callable(getattr(cnn, 'available', None)) and cnn.available(c))
                 for c in ('rotation', 'artifacts')}
+        kp = a.keypoints
         return {'status': 'ok', 'models': {'region_clf': True,
                                            'spine_appearance': a.spine.appearance.available,
+                                           'keypoints': bool(kp and getattr(kp, 'available', False)),
                                            **nets}}
     except Exception as e:
         raise HTTPException(503, f'модели не загружены: {e}')
@@ -194,7 +196,15 @@ def version() -> dict:
     from hip_rotation import THRESHOLDS as ROT
     from hip_roi.geometry import BOTTOM_MM, LAT_MM, TOP_MM
     from spine_qc.geometry import AXIS_LIMIT_DEG
+    kp = a.keypoints
     return {'version': VERSION, 'hip_method': a.hip_method, 'roi_rule': a.roi_rule,
+            'keypoints_requested': kp is not None,
+            'keypoints_available': bool(kp and getattr(kp, 'available', False)),
+            'keypoints_error': getattr(kp, 'error', None) if kp is not None else None,
+            'keypoints_multicrop_active': bool(kp and getattr(kp, 'multicrop', False)),
+            'keypoints_axis_verdict_active': bool(
+                kp and getattr(kp, 'use_for_verdict', False)
+                and getattr(kp, 'axis_gate_passed', False)),
             'spine_thresholds': {k: v for k, v in a.spine.thresholds.items()
                                  if not isinstance(v, dict)},
             'rotation_corridor_mm2': [ROT['area_lo'], ROT['area_hi']],
@@ -202,7 +212,7 @@ def version() -> dict:
             # настоящие нормы, а не зашитые в страницу числа
             'roi_margins_mm': {'top': TOP_MM, 'bottom': BOTTOM_MM, 'lat': LAT_MM},
             'axis_limit_deg_tz': AXIS_LIMIT_DEG,
-            'keypoints': a.keypoints is not None and bool(getattr(a.keypoints, 'available', False)),
+            'keypoints': bool(kp and getattr(kp, 'available', False)),
             'cnn': {c: {'threshold': m.get('threshold'), 'stack': m.get('stack')}
                     for c, m in getattr(a.cnn, 'meta', {}).items()},
             'region_classes': list(REGION_RU)}

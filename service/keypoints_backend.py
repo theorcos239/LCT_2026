@@ -729,6 +729,7 @@ class KeypointBackend:
                         self.multicrop_variant = 'auto'
             self.multicrop = self.multicrop_requested and self.multicrop_gate_passed
         except Exception as e:                       # noqa: BLE001 — причина уходит во флаг
+            self.predictor = None
             self.error = f'{type(e).__name__}: {e}'
             if not quiet:
                 print(f'модель точек недоступна: {self.error}')
