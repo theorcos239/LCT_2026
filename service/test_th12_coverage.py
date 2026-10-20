@@ -41,7 +41,7 @@ def test_half_body_visible_is_ok():
 def test_mid_band_is_review_not_hard():
     """ТЗ < 50%, но выше hard — undetermined, не spine_position."""
     step = 40.0
-    bot_y = 0.30 * TH12_BODY_TO_STEP * step  # между hard 0.13 и half 0.5
+    bot_y = 0.30 * TH12_BODY_TO_STEP * step  # между hard 0.05 и half 0.5
     pts = {
         'th12_bottom': (100.0, bot_y),
         'l1_center': (100.0, 80.0),
@@ -57,7 +57,7 @@ def test_mid_band_is_review_not_hard():
 
 def test_hard_short_is_violation():
     step = 40.0
-    bot_y = 0.08 * TH12_BODY_TO_STEP * step  # < 0.13
+    bot_y = 0.03 * TH12_BODY_TO_STEP * step  # < hard 0.05
     pts = {
         'th12_bottom': (100.0, bot_y),
         'l1_center': (100.0, 80.0),
@@ -68,6 +68,22 @@ def test_hard_short_is_violation():
     assert out['state'] == 'unsuitable'
     assert out['violated'] is True
     assert 'position:th12_short' in out['flags']
+
+
+def test_former_hard_edge_is_review_not_position():
+    """frac 0.08 при hard=0.05 — mid-band, не spine_position (было FP на НД)."""
+    step = 40.0
+    bot_y = 0.08 * TH12_BODY_TO_STEP * step
+    pts = {
+        'th12_bottom': (100.0, bot_y),
+        'l1_center': (100.0, 80.0),
+        'l2_center': (100.0, 80.0 + step),
+    }
+    out = th12_coverage_from_points(_get(pts), image_height=300)
+    assert out['frac'] > TH12_HARD_FRAC
+    assert out['state'] == 'undetermined'
+    assert out['violated'] is None
+    assert 'position:th12_review' in out['flags']
 
 
 def test_bottom_missing_is_review_not_hard():
@@ -94,7 +110,7 @@ def test_prior_short_is_undetermined_not_violation():
 def test_apply_hard_ors_into_position():
     position = {'violated': False, 'text': '', 'flags': [], 'iliac_area': 0.05}
     th12 = th12_coverage_from_points(_get({
-        'th12_bottom': (100.0, 3.0),
+        'th12_bottom': (100.0, 1.0),
         'l1_center': (100.0, 80.0),
         'l2_center': (100.0, 120.0),
     }), image_height=300)
@@ -117,11 +133,11 @@ def test_apply_review_does_not_force_position():
     assert out['th12_needs_review'] is True
 
 
-def test_record_th12_review_adds_undetermined():
+def test_record_th12_review_flags_only_no_undetermined():
     out = {'flags': [], 'violations': []}
     position = {'violated': False, 'th12_needs_review': True}
     record_th12_review(out, position)
-    assert 'undetermined' in out['violations']
+    assert out['violations'] == []
     assert 'position:th12_needs_review' in out['flags']
 
 

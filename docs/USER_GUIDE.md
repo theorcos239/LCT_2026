@@ -196,11 +196,18 @@ curl -OJ http://localhost:8000/jobs/<id>/report      # таблица, когд�
 | `orientation:mirrored_lr` и др. | снимок выгружен зеркально или перевёрнутым и приведён к стандартному виду по тегу `PatientOrientation` |
 | `axis:curved` | позвоночник изогнут (сколиоз): формально ось вертикальна. Эксперт при сколиозе нарушение оси обычно не ставит — если стоит `spine_axis`, посмотрите снимок сами |
 | `position:iliac_missing_one_side` | гребень не найден только с одной стороны |
-| `position:th12_short` | hard: виден низ Th12 и доля тела &lt; 13% → `spine_position` |
-| `position:th12_review` | доля Th12 13–50% — ручной разбор (`undetermined`), не автобрак |
-| `position:th12_bottom_missing` | модель не видит низ Th12 — review, не автобрак |
-| `position:th12_needs_review` | покрытие Th12 неуверенно; кадр уходит человеку |
+| `position:th12_short` | hard: виден низ Th12 и доля тела &lt; 5% → `spine_position` |
+| `position:th12_review` | доля Th12 5–50% — флаг review, без автобрака и без `undetermined` |
+| `position:th12_bottom_missing` | модель не видит низ Th12 — флаг review, не автобрак |
+| `position:th12_needs_review` | покрытие Th12 неуверенно (только флаг, violations не трогаем) |
 | `position:th12_undetermined` | покрытие Th12 по точкам не удалось измерить |
+| `axis:point_clears_contour` | точки: угол &lt;3° — контурный брак оси снят |
+| `axis:point_overrides_contour` | края контура расходятся (&gt;2°) и точки ≥5° — брак оси по точкам |
+| `axis:point_tilt_over_tz` | контур «норма», точки ≥5°, края согласны — только флаг |
+| `axis:scoliosis_suppressed` | сильный сколиоз по L1–L4 — ложный наклон оси снят |
+| `rotation:points_normal_bulge` | выступ малого вертела по точкам в норме (3–8 мм) — брак ротации снят |
+| `rotation:points_abnormal_bulge` | точки подтверждают нетипичный выступ при браке ротации |
+| `artifacts:cnn_only_suppressed` | CNN одна castит брак артефактов, геометрия нет — брак не ставим |
 | `I:strict_mask`, `I:anatomical_prior` | нижняя точка седалищной кости (низ ROI бедра) найдена по строгой маске или не найдена и взята по анатомии («вертел + 69 мм») — нижний отступ проверьте по картинке; на вердикт по длине поля не влияет |
 | `rotation:no_contour`, `rotation:no_anchor` | ротацию измерить не удалось |
 | `region:не похож на DXA` / `кадр перевёрнут` / `низкий контраст` | почему снимок не принят фильтром области |

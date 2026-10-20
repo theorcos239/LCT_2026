@@ -44,7 +44,7 @@ def main(argv: list[str] | None = None) -> int:
                     help='эксперимент: точки позвоночника по перекрывающимся полосам')
     ap.add_argument('--keypoints-verdict', action='store_true',
                     help='разрешить проверенной модели точек подменять контурный вердикт')
-    ap.add_argument('--roi-rule', default='scan_length', choices=('scan_length', 'margins'),
+    ap.add_argument('--roi-rule', default='margins', choices=('scan_length', 'margins'),
                     help='отступы ROI: длина поля, как оценивает эксперт (по умолчанию), '
                          'или отступы от ориентиров буквально по рисунку 6 ТЗ')
     ap.add_argument('--no-cnn', action='store_true',

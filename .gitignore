@@ -76,6 +76,7 @@ runs/**
 !/Processing/
 /Processing/*
 !/Processing/dxa-crops.json
+!/Processing/metrics_full_table.xlsx
 /notebooks/
 /hip_roi/eval/*.png
 /hip_roi/contradictions/

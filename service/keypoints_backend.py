@@ -352,10 +352,25 @@ TH12_BODY_TO_STEP = 0.95
 TH12_HALF_FRAC = 0.5          # ТЗ: видна не меньше половины тела Th12
 # Hard-reject только при видимом th12_bottom и очень малом frac.
 # Сетка 0.05–0.50 на 92 live-кадрах (Processing/eval_th12_full/hard_frac_sweep_live.csv):
-# плато expert F1=0.80 / GT precision=1.0 при hard∈[0.05, 0.13]; выше 0.13
-# появляется 2-й FP vs эксперту. Берём правый край плато.
-TH12_HARD_FRAC = 0.13
+# плато expert F1=0.80 / GT precision=1.0 при hard∈[0.05, 0.13]. Правый край
+# (0.13) на полной НД дал 2 FP / 0 TP vs эксперту (frac 0.066 и 0.091) —
+# берём левый край плато, mid-band остаётся флагом без undetermined.
+TH12_HARD_FRAC = 0.05
 TH12_BORDER_FRAC = 0.05
+# Порог ТЗ для оси (°) — сверка контура с диагностическими точками при
+# закрытом axis-gate (см. reconcile_contour_axis_with_points).
+AXIS_TZ_LIMIT_DEG = 5.0
+# Контурный брак гасим, только если точки явно «норма» (далеко от порога).
+# Без требования corroboration ≥4°: оно роняло recall оси на НД.
+AXIS_POINT_CLEAR_DEG = 3.0
+# Узкий override: контур «норма», но края расходятся и точки ≥ ТЗ → брак.
+# На НД ловит FN (контур 2.7° / точки 5.7° / disagree 3.1°) без blanket-OR.
+AXIS_POINT_OVERRIDE_DISAGREE_DEG = 2.0
+# Выступ малого вертела по точкам: на pack 5–95% ≈ 2.5–10.6 мм, медиана 6.0.
+# Если свод (геометрия/CNN) ставит брак, а точки в «ядре нормы» — гасим FP.
+# Сетка на НД: [3, 8] мм → F1 0.60→0.67, P 0.51→0.70.
+ROTATION_KP_NORMAL_LO_MM = 3.0
+ROTATION_KP_NORMAL_HI_MM = 8.0
 # Медиана |th12_bottom.y − th12_top.y| на pack, px — если L1/L2 не видимы.
 TH12_BODY_PRIOR_PX = 38.0
 
@@ -515,15 +530,129 @@ def apply_th12_to_position(position: dict, th12: dict | None) -> dict:
 
 
 def record_th12_review(out: dict, position: dict) -> None:
-    """Неуверенное покрытие Th12 → ручной разбор, без ложного spine_position."""
+    """Mid-band / bottom_missing Th12 → флаги review, без undetermined.
+
+    Раньше сюда писался ``undetermined`` в violations: на НД это давало
+    ~16 ложных «есть нарушение» на чистых кадрах и роняло binary F1.
+    Hard-Th12 по-прежнему OR'ится в spine_position через apply_th12.
+    """
     if not position.get('th12_needs_review'):
         return
     if position.get('violated'):
         return  # уже брак по гребням или hard-Th12
     if 'position:th12_needs_review' not in out['flags']:
         out['flags'].append('position:th12_needs_review')
-    if 'undetermined' not in out['violations']:
-        out['violations'].append('undetermined')
+
+
+def reconcile_contour_axis_with_points(
+    contour_axis: dict | None,
+    point_axis: dict | None,
+    *,
+    tz_limit_deg: float = AXIS_TZ_LIMIT_DEG,
+    clear_deg: float = AXIS_POINT_CLEAR_DEG,
+    override_disagree_deg: float = AXIS_POINT_OVERRIDE_DISAGREE_DEG,
+) -> dict | None:
+    """Точки — судья для контурной оси при закрытом gate.
+
+    Полный fused-verdict закрыт OOF-гейтом. Правила (НД, spine):
+      * контур «брак», |θ_точек| < clear_deg → гасим;
+      * контур «норма», |θ_точек| ≥ tz_limit и расхождение краёв
+        > override_disagree_deg → брак по точкам (``axis:point_overrides_contour``);
+      * контур «норма», |θ_точек| ≥ tz_limit без расхождения → только флаг
+        ``axis:point_tilt_over_tz`` (без автобрака).
+    Сильный сколиоз гасится позже ``apply_scoliosis_to_axis``.
+    """
+    if not contour_axis:
+        return contour_axis
+    if not point_axis:
+        return contour_axis
+    point_ang = point_axis.get('angle_deg')
+    if point_ang is None:
+        point_ang = point_axis.get('angle_centers_deg')
+    if point_ang is None:
+        return contour_axis
+    point_abs = abs(float(point_ang))
+    out = dict(contour_axis)
+    flags = list(out.get('flags') or [])
+    if 'axis:points_missing' in flags:
+        return contour_axis
+
+    out['point_angle_deg'] = round(float(point_ang), 2)
+    disagree = out.get('disagreement_deg')
+    if disagree is None and 'axis:estimates_disagree' in flags:
+        disagree = override_disagree_deg + 0.1
+
+    if out.get('violated') is True and point_abs < clear_deg:
+        out['violated'] = False
+        out['text'] = ''
+        if 'state' in out:
+            out['state'] = 'suitable'
+        flags = [f for f in flags if f != 'axis:needs_review']
+        if 'axis:point_clears_contour' not in flags:
+            flags.append('axis:point_clears_contour')
+        out['flags'] = flags
+        return out
+
+    if (out.get('violated') is not True and point_abs >= tz_limit_deg
+            and disagree is not None
+            and float(disagree) > override_disagree_deg):
+        out['violated'] = True
+        out['text'] = (f'ось позвоночника отклонена на {point_abs:.1f}° по точкам '
+                       f'(контур ненадёжен: расхождение краёв {float(disagree):.1f}°; '
+                       f'допустимо {tz_limit_deg:.0f}°)')
+        if 'state' in out:
+            out['state'] = 'unsuitable'
+        if 'axis:point_overrides_contour' not in flags:
+            flags.append('axis:point_overrides_contour')
+        # убрать «мягкий» флаг tilt, если был
+        flags = [f for f in flags if f != 'axis:point_tilt_over_tz']
+        out['flags'] = flags
+        return out
+
+    if out.get('violated') is not True and point_abs >= tz_limit_deg:
+        if 'axis:point_tilt_over_tz' not in flags:
+            flags.append('axis:point_tilt_over_tz')
+        out['flags'] = flags
+        return out
+
+    return out
+
+
+def judge_rotation_with_points(
+    rotation: dict | None,
+    kp_bulge_mm: float | None,
+    *,
+    normal_lo: float = ROTATION_KP_NORMAL_LO_MM,
+    normal_hi: float = ROTATION_KP_NORMAL_HI_MM,
+) -> dict | None:
+    """Точки — судья в споре по ротации: нормальный выступ снимает брак.
+
+    Никогда не создаёт нового нарушения (только гасит FP). Если точек нет —
+    вердикт свода геометрия+CNN не трогаем.
+    """
+    if not rotation or rotation.get('violated') is not True:
+        return rotation
+    if kp_bulge_mm is None or not np.isfinite(float(kp_bulge_mm)):
+        return rotation
+    bulge = float(kp_bulge_mm)
+    out = dict(rotation)
+    out['keypoints_bulge_mm'] = round(bulge, 2)
+    flags = list(out.get('flags') or [])
+    if normal_lo <= bulge <= normal_hi:
+        out['violated'] = False
+        out['text'] = ''
+        out['geometry_violated'] = out.get('geometry_violated')
+        if 'rotation:points_normal_bulge' not in flags:
+            flags.append('rotation:points_normal_bulge')
+        out['flags'] = flags
+        out['confidence'] = 'low'
+        out['method'] = (str(out.get('method') or 'ротация')
+                         + '; точки: выступ в норме → брак снят')
+        return out
+    if 'rotation:points_abnormal_bulge' not in flags:
+        flags.append('rotation:points_abnormal_bulge')
+    out['flags'] = flags
+    return out
 
 
 # --------------------------------------------------------------------------- #

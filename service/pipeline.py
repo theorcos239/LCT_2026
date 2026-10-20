@@ -87,17 +87,16 @@ class Analyzer:
     strict_region: bool = True      # непринятый кадр не отправляем на критерии
     keypoints: object = None        # модель ключевых точек; None — контурная геометрия
     cnn: object = None              # cnn_qc: второе мнение по ротации и артефактам
-    # Вердикт по отступам ROI: 'scan_length' — хватает ли длины поля (так
-    # отступы оценивает эксперт, F1 0.71 против его разметки), 'margins' —
-    # отступы от найденных ориентиров буквально по рисунку 6 ТЗ (F1 0.35).
-    # Отступы по рисунку 6 считаются и показываются в обоих режимах.
-    roi_rule: str = 'scan_length'
+    # Вердикт по отступам ROI: 'margins' — по рис. 6 ТЗ (эталон после правки
+    # архива expert_vs_tz); 'scan_length' — по длине поля (старое согласование
+    # с экспертом до правки). Отступы по рис. 6 считаются в обоих режимах.
+    roi_rule: str = 'margins'
     axis_undetermined_policy: str = 'review'
 
     @classmethod
     def load(cls, hip_method: str = 'kit2', strict_region: bool = True,
              keypoints: bool = False, keypoints_dir=None, cnn: bool = True,
-             cnn_oof: bool = False, roi_rule: str = 'scan_length',
+             cnn_oof: bool = False, roi_rule: str = 'margins',
              keypoints_multicrop: bool = False,
              keypoints_verdict: bool = False,
              axis_undetermined_policy: str = 'review') -> 'Analyzer':
@@ -169,7 +168,8 @@ class Analyzer:
         }
         return kp
 
-    def _cnn(self, crit: str, px: np.ndarray, region: str, geometry, out: dict) -> dict | None:
+    def _cnn(self, crit: str, px: np.ndarray, region: str, geometry, out: dict,
+             keypoints: float | None = None) -> dict | None:
         """Свод сети с геометрией по критерию или None, если сеть недоступна.
 
         Недоступная сеть не роняет кадр и не подменяет метод молча: вердикт
@@ -183,6 +183,9 @@ class Analyzer:
             out['flags'].append(f'cnn:unavailable({crit}: {err})')
             return None
         try:
+            return self.cnn.assess(crit, px, region, geometry, keypoints=keypoints)
+        except TypeError:
+            # Старый CnnQC без keypoints в assess — только геометрия.
             return self.cnn.assess(crit, px, region, geometry)
         except Exception as e:                       # noqa: BLE001 — причина во флаг
             out['flags'].append(f'cnn:failed({crit}: {type(e).__name__}: {e})')
@@ -190,7 +193,12 @@ class Analyzer:
 
     @staticmethod
     def _merge_cnn(c: dict, a: dict, name: str, out: dict) -> None:
-        """Вердикт критерия -> свод сети и геометрии; геометрия остаётся в деталях."""
+        """Вердикт критерия -> свод сети и геометрии; геометрия остаётся в деталях.
+
+        По артефактам при расхождении precision-first: CNN-only брак без
+        геометрии не ставим (на НД FP бьют F1 сильнее FN). Ротацию не режем
+        здесь — там судья по точкам (``judge_rotation_with_points``).
+        """
         geo = c.get('violated')
         c['geometry_violated'] = geo
         c['p_cnn'] = a['p_cnn']
@@ -201,6 +209,10 @@ class Analyzer:
         if geo is not None and bool(geo) != a['violated']:
             out['flags'].append(f'{name}:cnn_vs_geometry_disagree')
             c['confidence'] = 'low'
+            if name == 'artifacts' and geo is False and a['violated']:
+                c['violated'] = False
+                out['flags'].append('artifacts:cnn_only_suppressed')
+                c['method'] = 'свод: CNN без геометрии не достаточно (precision)'
         elif geo is not None:
             c['confidence'] = 'high'
         out.setdefault('heatmaps', {})[name] = a['heatmap']
@@ -295,10 +307,15 @@ class Analyzer:
                 res['criteria']['axis'] = reviewed
                 if reviewed.get('state') == 'undetermined':
                     record_axis_review(out, self.axis_undetermined_policy)
-            elif apply_scoliosis is not None and scoliosis is not None:
-                # Диагностические точки (gate выкл.): вердикт контурный, но
-                # сильный сколиоз по точкам гасит ложный «наклон хорды».
-                axis = apply_scoliosis(res['criteria']['axis'], scoliosis)
+            elif kp is not None:
+                # Диагностические точки (gate выкл.): контурный вердикт +
+                # узкая сверка с θ точек + сколиоз-политика.
+                from .keypoints_backend import reconcile_contour_axis_with_points
+                axis = reconcile_contour_axis_with_points(
+                    res['criteria']['axis'],
+                    kp.get('axis_diagnostic') or kp.get('axis'))
+                if apply_scoliosis is not None and scoliosis is not None:
+                    axis = apply_scoliosis(axis, scoliosis)
                 res['criteria']['axis'] = axis
                 out['details']['spine']['axis'] = axis
                 if (axis.get('violated') is None
@@ -312,8 +329,8 @@ class Analyzer:
             if scoliosis and scoliosis.get('present'):
                 out['flags'].append('scoliosis:present')
             # Половина тела Th12 — из точек (контурный top_margin выключен).
-            # Hard-reject (очень малый frac при видимом bottom) OR'ится в
-            # spine_position; mid-band / bottom_missing → undetermined (review).
+            # Hard-reject OR'ится в spine_position; mid-band / bottom_missing —
+            # только флаги review (без undetermined в violations).
             if kp and kp.get('th12_coverage') is not None:
                 from .keypoints_backend import (apply_th12_to_position,
                                                record_th12_review)
@@ -391,14 +408,17 @@ class Analyzer:
             # Подставить более точную верхушку, не пересчитав коридор, значит
             # сдвинуть измерение относительно порога.
             rot = detect_rotation(px, region, thr=ROT_THR, T=contour.get('T_px'))
-            if kp and kp['rotation'] is not None:
-                rot = {**rot, 'keypoints_bulge_mm': kp['rotation']['bulge_mm']}
+            kp_bulge = None
+            if kp and kp.get('rotation') is not None:
+                kp_bulge = kp['rotation'].get('bulge_mm')
+                rot = {**rot, 'keypoints_bulge_mm': kp_bulge}
             rot['probability'] = probability.apply(ROT_THR.get('probability'),
                                                    rot.get('corridor_distance'))
-            a = self._cnn('rotation', px, region, rot.get('corridor_distance'), out)
+            a = self._cnn('rotation', px, region, rot.get('corridor_distance'), out,
+                          keypoints=kp_bulge)
             if a is not None:
                 self._merge_cnn(rot, a, 'rotation', out)
-                if rot['violated'] and not rot['geometry_violated']:
+                if rot['violated'] and not rot.get('geometry_violated'):
                     area = rot.get('area_mm2')
                     rot['text'] = ('ротация: вид малого вертела нетипичен для корректной '
                                    f"укладки (нейросеть {a['p_cnn']:.2f}"
@@ -406,6 +426,10 @@ class Analyzer:
                                       if area is not None else '') + ')')
                 elif not rot['violated']:
                     rot['text'] = ''
+            # Точки — судья: нормальный выступ L1-трохантера снимает брак свода.
+            if kp_bulge is not None:
+                from .keypoints_backend import judge_rotation_with_points
+                rot = judge_rotation_with_points(rot, kp_bulge)
             out['probabilities']['hip_rotation'] = rot['probability']
             out['details']['hip_rotation'] = rot
             out['flags'] += list(rot.get('flags', []))

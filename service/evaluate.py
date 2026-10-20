@@ -83,7 +83,7 @@ def _risk_score(vtype: str, details: dict) -> float:
 
 def run(hip_method: str = 'kit2', keypoints: bool = False,
         keypoints_oof: bool = False, cnn: bool = True,
-        roi_rule: str = 'scan_length', folds: list[int] | None = None,
+        roi_rule: str = 'margins', folds: list[int] | None = None,
         keypoints_dir: str | Path | None = None,
         keypoints_multicrop: bool = False) -> pd.DataFrame:
     """Прогон конвейера по всем уникальным кадрам обучающего набора.
@@ -369,7 +369,7 @@ def main() -> int:
                     help='оценить multi-crop вместо full-frame')
     ap.add_argument('--no-cnn', action='store_true',
                     help='без нейросети cnn_qc: вердикт по одной геометрии (базовая линия)')
-    ap.add_argument('--roi-rule', default='scan_length', choices=('scan_length', 'margins'))
+    ap.add_argument('--roi-rule', default='margins', choices=('scan_length', 'margins'))
     ap.add_argument('--folds', type=int, nargs='+', default=None,
                     help='только кадры этих фолдов (модель точек обучена не на всех)')
     ap.add_argument('--out', type=Path, default=METRICS, help='куда положить метрики')

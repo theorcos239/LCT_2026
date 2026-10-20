@@ -19,9 +19,10 @@
    (OOF ROC-AUC 0.76-0.78), а среднее трёх — около 0.80. Свод поэтому
    калибруется по среднему OOF трёх сидов — аналогу поставляемого ансамбля.
 2. **Свод с геометрией.** Сеть не заменяет измерение, а дополняет его: вероятность
-   нарушения — логистическая регрессия по двум признакам, логиту сети и
-   геометрическому скору критерия (выход за коридор выступа малого вертела,
-   счёт top-hat). Коэффициентов три, подбираются на OOF.
+   нарушения — логистическая регрессия по логиту сети и геометрическому скору
+   критерия (выход за коридор выступа малого вертела, счёт top-hat). Для
+   ротации добавляется выступ по ключевым точкам (`keypoints_bulge_mm`).
+   Коэффициенты подбираются на OOF.
 3. **Порог** вердикта — максимум F1 на OOF-своде. Честная оценка — вложенная:
    для каждого фолда свод и порог подбираются по остальным четырём.
 4. **Итоговые модели** — тот же рецепт на всех кадрах, по одной на сид, экспорт
@@ -81,6 +82,21 @@ def geometry_scores(criterion: str, df: pd.DataFrame) -> np.ndarray:
     return df.rel_path.map(m.artifact_score).values.astype(float)
 
 
+def keypoints_bulge_scores(criterion: str, df: pd.DataFrame) -> np.ndarray | None:
+    """Выступ малого вертела по точкам (мм) для ротации; иначе None.
+
+    Берётся из ``cnn_qc/rotation/keypoints_bulge.csv``: OOF pack там, где есть,
+    иначе измерение бэкенда точек (тот же признак, что в сервисе).
+    """
+    if criterion != 'rotation':
+        return None
+    path = HERE / 'rotation' / 'keypoints_bulge.csv'
+    if not path.exists():
+        return None
+    m = pd.read_csv(path).set_index('rel_path')
+    return df.rel_path.map(m.bulge_mm).values.astype(float)
+
+
 def load_frames(criterion: str, pixels: bool = True) -> tuple[pd.DataFrame, np.ndarray | None]:
     cfg = CRITERIA[criterion]
     df = trainset.frames(cfg['region'])
@@ -89,6 +105,9 @@ def load_frames(criterion: str, pixels: bool = True) -> tuple[pd.DataFrame, np.n
                   for r in df.itertuples()]) if pixels else None
     df['y'] = df[cfg['label']].astype(int)
     df['geometry'] = geometry_scores(criterion, df)
+    kp = keypoints_bulge_scores(criterion, df)
+    if kp is not None:
+        df['keypoints_bulge'] = kp
     return df, X
 
 
@@ -249,28 +268,59 @@ def logit(p: np.ndarray) -> np.ndarray:
     return np.log(p / (1 - p))
 
 
-def stack_features(p_cnn: np.ndarray, geometry: np.ndarray) -> np.ndarray:
-    """[логит сети, геометрический скор]; неизмеренная геометрия -> 0 («в норме»)."""
+def stack_features(p_cnn: np.ndarray, geometry: np.ndarray,
+                   keypoints: np.ndarray | None = None,
+                   keypoints_impute: float | None = None) -> np.ndarray:
+    """[логит сети, геометрия, (опц.) выступ по точкам].
+
+    Неизмеренная геометрия -> 0 («в норме»). Нет точек -> ``keypoints_impute``
+    (медиана обучающих), чтобы нули не имитировали «нет выступа».
+    """
     g = np.where(np.isfinite(geometry), geometry, 0.0)
-    return np.column_stack([logit(p_cnn), g])
+    cols = [logit(p_cnn), g]
+    if keypoints is not None:
+        kp = np.asarray(keypoints, float)
+        fill = (float(np.nanmedian(kp)) if keypoints_impute is None
+                and np.isfinite(kp).any() else
+                (0.0 if keypoints_impute is None else float(keypoints_impute)))
+        cols.append(np.where(np.isfinite(kp), kp, fill))
+    return np.column_stack(cols)
 
 
-def fit_stack(p_cnn: np.ndarray, geometry: np.ndarray, y: np.ndarray) -> dict:
+def fit_stack(p_cnn: np.ndarray, geometry: np.ndarray, y: np.ndarray,
+              keypoints: np.ndarray | None = None) -> dict:
     """Логистическая регрессия на стандартизованных признаках -> коэффициенты в сырых."""
     from sklearn.linear_model import LogisticRegression
-    F_ = stack_features(p_cnn, geometry)
+    impute = None
+    if keypoints is not None and np.isfinite(keypoints).any():
+        impute = float(np.nanmedian(np.asarray(keypoints, float)))
+    F_ = stack_features(p_cnn, geometry, keypoints, impute)
     mu, sd = F_.mean(0), F_.std(0)
     sd[sd < 1e-12] = 1.0
     m = LogisticRegression(C=1.0, max_iter=1000).fit((F_ - mu) / sd, y.astype(int))
     w = m.coef_[0] / sd
     b = float(m.intercept_[0] - np.sum(m.coef_[0] * mu / sd))
-    return {'w_cnn_logit': round(float(w[0]), 6), 'w_geometry': round(float(w[1]), 6),
-            'b': round(b, 6)}
+    out = {'w_cnn_logit': round(float(w[0]), 6), 'w_geometry': round(float(w[1]), 6),
+           'b': round(b, 6)}
+    if keypoints is not None:
+        out['w_keypoints'] = round(float(w[2]), 6)
+        out['keypoints_impute'] = round(float(impute if impute is not None else 0.0), 4)
+    return out
 
 
-def apply_stack(s: dict, p_cnn, geometry) -> np.ndarray:
-    F_ = stack_features(np.atleast_1d(p_cnn), np.atleast_1d(geometry))
+def apply_stack(s: dict, p_cnn, geometry, keypoints=None) -> np.ndarray:
+    use_kp = 'w_keypoints' in s
+    impute = s.get('keypoints_impute')
+    if use_kp:
+        # Нет измерения → NaN, stack_features подставит keypoints_impute.
+        raw = keypoints if keypoints is not None else np.nan
+        kp_arr = np.atleast_1d(raw).astype(float)
+    else:
+        kp_arr = None
+    F_ = stack_features(np.atleast_1d(p_cnn), np.atleast_1d(geometry), kp_arr, impute)
     z = s['w_cnn_logit'] * F_[:, 0] + s['w_geometry'] * F_[:, 1] + s['b']
+    if use_kp:
+        z = z + s['w_keypoints'] * F_[:, 2]
     return 1.0 / (1.0 + np.exp(-np.clip(z, -30, 30)))
 
 
@@ -298,23 +348,30 @@ def threshold(rule: str, y: np.ndarray, p: np.ndarray) -> float:
     return float(y.mean()) if rule == 'prevalence' else best_threshold(y, p)
 
 
-def verdict_probability(kind: str, stack: dict | None, p_cnn, geometry) -> np.ndarray:
+def verdict_probability(kind: str, stack: dict | None, p_cnn, geometry,
+                        keypoints=None) -> np.ndarray:
     """Вероятность, по которой выносится вердикт: свод с геометрией или одна сеть."""
     if kind == 'cnn':
         return np.asarray(p_cnn, float)
-    return apply_stack(stack, p_cnn, geometry)
+    return apply_stack(stack, p_cnn, geometry, keypoints)
 
 
 def nested(df: pd.DataFrame, p_cnn: np.ndarray, rule: str = 'prevalence',
            kind: str = 'stack') -> tuple[np.ndarray, np.ndarray]:
     """Вложенная оценка: для фолда k свод и порог учатся на остальных четырёх."""
     y, g = df.y.values, df.geometry.values
+    kp = df['keypoints_bulge'].values if 'keypoints_bulge' in df.columns else None
     prob, pred = np.zeros(len(df)), np.zeros(len(df), int)
     for k in sorted(df.fold.unique()):
         te = (df.fold == k).values
-        s = fit_stack(p_cnn[~te], g[~te], y[~te]) if kind == 'stack' else None
-        t = threshold(rule, y[~te], verdict_probability(kind, s, p_cnn[~te], g[~te]))
-        prob[te] = verdict_probability(kind, s, p_cnn[te], g[te])
+        s = (fit_stack(p_cnn[~te], g[~te], y[~te],
+                       None if kp is None else kp[~te])
+             if kind == 'stack' else None)
+        t = threshold(rule, y[~te],
+                      verdict_probability(kind, s, p_cnn[~te], g[~te],
+                                          None if kp is None else kp[~te]))
+        prob[te] = verdict_probability(kind, s, p_cnn[te], g[te],
+                                       None if kp is None else kp[te])
         pred[te] = (prob[te] >= t).astype(int)
     return prob, pred
 
@@ -421,11 +478,12 @@ def main() -> int:
     p_cnn = np.mean([oof[k] for k in args.seeds], axis=0)
     g = df.geometry.values
     g_ok = np.where(np.isfinite(g), g, 0.0)
+    kp = df['keypoints_bulge'].values if 'keypoints_bulge' in df.columns else None
     kind, rule = args.verdict, args.threshold_rule
     prob_n, pred_n = nested(df, p_cnn, rule, kind)
-    stack = fit_stack(p_cnn, g, y)
-    p_stack = apply_stack(stack, p_cnn, g)
-    p_verdict = verdict_probability(kind, stack, p_cnn, g)
+    stack = fit_stack(p_cnn, g, y, kp)
+    p_stack = apply_stack(stack, p_cnn, g, kp)
+    p_verdict = verdict_probability(kind, stack, p_cnn, g, kp)
     thr = threshold(rule, y, p_verdict)
 
     # вердикт одной геометрии — для сравнения (как в сервисе до сети)
@@ -468,13 +526,15 @@ def main() -> int:
         'metrics': {k: {kk: (list(vv) if isinstance(vv, tuple) else vv) for kk, vv in v.items()}
                     if isinstance(v, dict) else v for k, v in res.items()},
     }
-    pd.DataFrame({'rel_path': df.rel_path, 'study': df.study, 'px_hash': df.px_hash,
-                  'label': df.label, 'fold': df.fold, 'y': y, 'geometry': g,
-                  'p_cnn': np.round(p_cnn, 6),
-                  **{f'p_cnn_seed{k}': np.round(v, 6) for k, v in oof.items()},
-                  'p_stack': np.round(p_stack, 6), 'p_verdict': np.round(p_verdict, 6),
-                  'p_verdict_nested': np.round(prob_n, 6), 'pred_nested': pred_n}
-                 ).to_csv(out / 'oof.csv', index=False, encoding='utf-8')
+    oof_cols = {'rel_path': df.rel_path, 'study': df.study, 'px_hash': df.px_hash,
+                'label': df.label, 'fold': df.fold, 'y': y, 'geometry': g,
+                'p_cnn': np.round(p_cnn, 6),
+                **{f'p_cnn_seed{k}': np.round(v, 6) for k, v in oof.items()},
+                'p_stack': np.round(p_stack, 6), 'p_verdict': np.round(p_verdict, 6),
+                'p_verdict_nested': np.round(prob_n, 6), 'pred_nested': pred_n}
+    if kp is not None:
+        oof_cols['keypoints_bulge'] = np.round(kp.astype(float), 4)
+    pd.DataFrame(oof_cols).to_csv(out / 'oof.csv', index=False, encoding='utf-8')
 
     if args.calibrate_only:
         meta['onnx'] = json.loads((out / 'meta.json').read_text(encoding='utf-8')).get('onnx')

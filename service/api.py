@@ -96,7 +96,7 @@ def analyzer() -> Analyzer:
                 keypoints_verdict=os.environ.get(
                     'DXA_QC_KEYPOINTS_VERDICT', '') not in ('', '0', 'false'),
                 cnn=os.environ.get('DXA_QC_CNN', '1') not in ('0', 'false'),
-                roi_rule=os.environ.get('DXA_QC_ROI_RULE', 'scan_length'))
+                roi_rule=os.environ.get('DXA_QC_ROI_RULE', 'margins'))
     return _analyzer
 
 
