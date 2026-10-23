@@ -1,5 +1,6 @@
 __pycache__/
 *.pyc
+.DS_Store
 /.venv-local/
 /:memory:.ses
 # Нейросетевые чекпоинты хранятся отдельно от Git (в том числе вне runs/).
@@ -87,6 +88,7 @@ runs/**
 # В репозитории остаются только версии документации без рентгеновских снимков:
 # docs/Пояснительная_записка.pdf и docs/Инструкция_*.pdf.
 /docs/presentation/
+/docs/pitch/DXA_details.pptx
 /docs/manuals/
 /ЛЦТ2026 Шаблон презентации.pptx
 /4. ДепЗдрав.pdf
